@@ -11,6 +11,10 @@ on:
         description: "Reason for manual sync"
         required: false
 
+permissions:
+  contents: write
+  workflows: write
+
 jobs:
   sync-upstream:
     runs-on: ubuntu-latest
