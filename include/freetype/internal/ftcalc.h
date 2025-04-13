@@ -33,11 +33,30 @@ FT_BEGIN_HEADER
    *
    */
 
-#ifndef  FT_CONFIG_OPTION_NO_ASSEMBLER
-  /* Provide assembler fragments for performance-critical functions. */
-  /* These must be defined `static __inline__' with GCC.             */
+#ifdef FT_CONFIG_OPTION_INLINE_MULFIX
 
-#if defined( __CC_ARM ) || defined( __ARMCC__ )  /* RVCT */
+#ifdef FT_INT64
+
+  static inline FT_Long
+  FT_MulFix_64( FT_Long  a,
+                FT_Long  b )
+  {
+    FT_Int64  ab = (FT_Int64)( (FT_UInt64)a * (FT_UInt64)b );
+
+
+    ab += 0x8000 + ( ab >> 63 );  /* rounding phase */
+
+    return (FT_Long)( ab >> 16 );
+  }
+
+#define FT_MulFix( a, b )  FT_MulFix_64( a, b )
+
+#elif !defined( FT_CONFIG_OPTION_NO_ASSEMBLER )
+  /* Provide 32-bit assembler fragments for optimized FT_MulFix. */
+  /* These must be defined `static __inline__' or similar.       */
+
+#if defined( __arm__ )                                 && \
+    ( defined( __thumb2__ ) || !defined( __thumb__ ) )
 
 #define FT_MULFIX_ASSEMBLER  FT_MulFix_arm
 
@@ -49,6 +68,7 @@ FT_BEGIN_HEADER
   {
     FT_Int32  t, t2;
 
+#if defined( __CC_ARM ) || defined( __ARMCC__ )  /* RVCT */
 
     __asm
     {
@@ -60,28 +80,8 @@ FT_BEGIN_HEADER
       mov   a,  t2, lsr #16         /* a   = t2 >> 16 */
       orr   a,  a,  t,  lsl #16     /* a  |= t << 16 */
     }
-    return a;
-  }
 
-#endif /* __CC_ARM || __ARMCC__ */
-
-
-#ifdef __GNUC__
-
-#if defined( __arm__ )                                 && \
-    ( !defined( __thumb__ ) || defined( __thumb2__ ) ) && \
-    !( defined( __CC_ARM ) || defined( __ARMCC__ ) )
-
-#define FT_MULFIX_ASSEMBLER  FT_MulFix_arm
-
-  /* documentation is in freetype.h */
-
-  static __inline__ FT_Int32
-  FT_MulFix_arm( FT_Int32  a,
-                 FT_Int32  b )
-  {
-    FT_Int32  t, t2;
-
+#elif defined( __GNUC__ )
 
     __asm__ __volatile__ (
       "smull  %1, %2, %4, %3\n\t"       /* (lo=%1,hi=%2) = a*b */
@@ -98,26 +98,25 @@ FT_BEGIN_HEADER
       : "=r"(a), "=&r"(t2), "=&r"(t)
       : "r"(a), "r"(b)
       : "cc" );
+
+#endif
+
     return a;
   }
 
-#endif /* __arm__                      && */
-       /* ( __thumb2__ || !__thumb__ ) && */
-       /* !( __CC_ARM || __ARMCC__ )      */
-
-
-#if defined( __i386__ )
+#elif defined( __i386__ ) || defined( _M_IX86 )
 
 #define FT_MULFIX_ASSEMBLER  FT_MulFix_i386
 
   /* documentation is in freetype.h */
 
-  static __inline__ FT_Int32
+  static __inline FT_Int32
   FT_MulFix_i386( FT_Int32  a,
                   FT_Int32  b )
   {
     FT_Int32  result;
 
+#if defined( __GNUC__ )
 
     __asm__ __volatile__ (
       "imul  %%edx\n"
@@ -132,27 +131,8 @@ FT_BEGIN_HEADER
       : "=a"(result), "=d"(b)
       : "a"(a), "d"(b)
       : "%ecx", "cc" );
-    return result;
-  }
 
-#endif /* i386 */
-
-#endif /* __GNUC__ */
-
-
-#ifdef _MSC_VER /* Visual C++ */
-
-#ifdef _M_IX86
-
-#define FT_MULFIX_ASSEMBLER  FT_MulFix_i386
-
-  /* documentation is in freetype.h */
-
-  static __inline FT_Int32
-  FT_MulFix_i386( FT_Int32  a,
-                  FT_Int32  b )
-  {
-    FT_Int32  result;
+#elif defined( _MSC_VER)
 
     __asm
     {
@@ -169,81 +149,20 @@ FT_BEGIN_HEADER
       add eax, edx
       mov result, eax
     }
+
+#endif
+
     return result;
   }
 
-#endif /* _M_IX86 */
-
-#endif /* _MSC_VER */
+#endif /* __i386__ || _M_IX86 */
 
 
-#if defined( __GNUC__ ) && defined( __x86_64__ )
-
-#define FT_MULFIX_ASSEMBLER  FT_MulFix_x86_64
-
-  static __inline__ FT_Int32
-  FT_MulFix_x86_64( FT_Int32  a,
-                    FT_Int32  b )
-  {
-    /* Temporarily disable the warning that C90 doesn't support */
-    /* `long long'.                                             */
-#if __GNUC__ > 4 || ( __GNUC__ == 4 && __GNUC_MINOR__ >= 6 )
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wlong-long"
-#endif
-
-#if 1
-    /* Technically not an assembly fragment, but GCC does a really good */
-    /* job at inlining it and generating good machine code for it.      */
-    long long  ret, tmp;
-
-
-    ret  = (long long)a * b;
-    tmp  = ret >> 63;
-    ret += 0x8000 + tmp;
-
-    return (FT_Int32)( ret >> 16 );
-#else
-
-    /* For some reason, GCC 4.6 on Ubuntu 12.04 generates invalid machine  */
-    /* code from the lines below.  The main issue is that `wide_a' is not  */
-    /* properly initialized by sign-extending `a'.  Instead, the generated */
-    /* machine code assumes that the register that contains `a' on input   */
-    /* can be used directly as a 64-bit value, which is wrong most of the  */
-    /* time.                                                               */
-    long long  wide_a = (long long)a;
-    long long  wide_b = (long long)b;
-    long long  result;
-
-
-    __asm__ __volatile__ (
-      "imul %2, %1\n"
-      "mov %1, %0\n"
-      "sar $63, %0\n"
-      "lea 0x8000(%1, %0), %0\n"
-      "sar $16, %0\n"
-      : "=&r"(result), "=&r"(wide_a)
-      : "r"(wide_b)
-      : "cc" );
-
-    return (FT_Int32)result;
-#endif
-
-#if __GNUC__ > 4 || ( __GNUC__ == 4 && __GNUC_MINOR__ >= 6 )
-#pragma GCC diagnostic pop
-#endif
-  }
-
-#endif /* __GNUC__ && __x86_64__ */
+#define FT_MulFix( a, b )  FT_MULFIX_ASSEMBLER( (FT_Int32)(a), (FT_Int32)(b) )
 
 #endif /* !FT_CONFIG_OPTION_NO_ASSEMBLER */
 
-
-#ifdef FT_CONFIG_OPTION_INLINE_MULFIX
-#ifdef FT_MULFIX_ASSEMBLER
-#define FT_MulFix( a, b )  FT_MULFIX_ASSEMBLER( (FT_Int32)(a), (FT_Int32)(b) )
-#endif
-#endif
+#endif /* FT_CONFIG_OPTION_INLINE_MULFIX */
 
 
   /**************************************************************************
@@ -454,6 +373,10 @@ FT_BEGIN_HEADER
   __modify __exact [__eax] __nomemory;
 
 #define FT_MSB( x )  FT_MSB_i386( x )
+
+#elif defined( __CC_ARM )
+
+#define FT_MSB( x )  ( 31 - __clz( x ) )
 
 #elif defined( __SunOS_5_11 )
 
