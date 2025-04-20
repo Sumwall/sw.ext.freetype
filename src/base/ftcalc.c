@@ -87,7 +87,7 @@
   FT_EXPORT_DEF( FT_Fixed )
   FT_RoundFix( FT_Fixed  a )
   {
-    return ( ADD_LONG( a, 0x8000L - ( a < 0 ) ) ) & ~0xFFFFL;
+    return ADD_LONG( a, 0x8000L - ( a < 0 ) ) & ~0xFFFFL;
   }
 
 
@@ -96,7 +96,7 @@
   FT_EXPORT_DEF( FT_Fixed )
   FT_CeilFix( FT_Fixed  a )
   {
-    return ( ADD_LONG( a, 0xFFFFL ) ) & ~0xFFFFL;
+    return ADD_LONG( a, 0xFFFFL ) & ~0xFFFFL;
   }
 
 
@@ -230,10 +230,10 @@
 
 #else
 
-    FT_Int64  ab = (FT_Int64)a_ * (FT_Int64)b_;
+    FT_Int64  ab = MUL_INT64( a_, b_ );
 
     /* this requires arithmetic right shift of signed numbers */
-    return (FT_Long)( ( ab + 0x8000L - ( ab < 0 ) ) >> 16 );
+    return (FT_Long)( ( ab + 0x8000L + ( ab >> 63 ) ) >> 16 );
 
 #endif /* FT_CONFIG_OPTION_INLINE_MULFIX */
   }
@@ -974,43 +974,36 @@
 
 #else
 
-    FT_Int  result;
+    FT_Int64  z1, z2;
+    FT_Int    result;
 
 
-    if ( ADD_LONG( FT_ABS( in_x ), FT_ABS( out_y ) ) <= 131071L &&
-         ADD_LONG( FT_ABS( in_y ), FT_ABS( out_x ) ) <= 131071L )
+    if ( (FT_ULong)FT_ABS( in_x ) + (FT_ULong)FT_ABS( out_y ) <= 92681UL )
     {
-      FT_Long  z1 = MUL_LONG( in_x, out_y );
-      FT_Long  z2 = MUL_LONG( in_y, out_x );
-
-
-      if ( z1 > z2 )
-        result = +1;
-      else if ( z1 < z2 )
-        result = -1;
-      else
-        result = 0;
+      z1.lo = (FT_UInt32)in_x * (FT_UInt32)out_y;
+      z1.hi = (FT_UInt32)( (FT_Int32)z1.lo >> 31 );  /* sign-expansion */
     }
-    else /* products might overflow 32 bits */
-    {
-      FT_Int64  z1, z2;
-
-
-      /* XXX: this function does not allow 64-bit arguments */
+    else
       ft_multo64( (FT_UInt32)in_x, (FT_UInt32)out_y, &z1 );
+
+    if ( (FT_ULong)FT_ABS( in_y ) + (FT_ULong)FT_ABS( out_x ) <= 92681UL )
+    {
+      z2.lo = (FT_UInt32)in_y * (FT_UInt32)out_x;
+      z2.hi = (FT_UInt32)( (FT_Int32)z2.lo >> 31 );  /* sign-expansion */
+    }
+    else
       ft_multo64( (FT_UInt32)in_y, (FT_UInt32)out_x, &z2 );
 
-      if ( z1.hi > z2.hi )
-        result = +1;
-      else if ( z1.hi < z2.hi )
-        result = -1;
-      else if ( z1.lo > z2.lo )
-        result = +1;
-      else if ( z1.lo < z2.lo )
-        result = -1;
-      else
-        result = 0;
-    }
+    if      ( (FT_Int32)z1.hi > (FT_Int32)z2.hi )
+      result = +1;
+    else if ( (FT_Int32)z1.hi < (FT_Int32)z2.hi )
+      result = -1;
+    else if ( z1.lo > z2.lo )
+      result = +1;
+    else if ( z1.lo < z2.lo )
+      result = -1;
+    else
+      result =  0;
 
     /* XXX: only the sign of return value, +1/0/-1 must be used */
     return result;

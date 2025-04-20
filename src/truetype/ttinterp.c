@@ -1168,7 +1168,7 @@
   TT_MulFix14_64( FT_F26Dot6  a,
                   FT_F2Dot14  b )
   {
-    FT_Int64  ab = (FT_Int64)( (FT_UInt64)a * (FT_UInt64)b );
+    FT_Int64  ab = MUL_INT64( a, b );
 
 
     ab += 0x2000 + ( ab >> 63 );  /* rounding phase */
@@ -1288,33 +1288,24 @@
   /* for platforms where sizeof(int) == 2.                   */
   static FT_Int32
   TT_MulFix14( FT_Int32  a,
-               FT_Int    b )
+               FT_Int16  b )
   {
-    FT_Int32   sign;
-    FT_UInt32  ah, al, mid, lo, hi;
+    FT_Int32   m, hi;
+    FT_UInt32  l, lo;
 
 
-    sign = a ^ b;
+    /* compute a*b as 64-bit (hi_lo) value */
+    l = (FT_UInt32)( ( a & 0xFFFFU ) * b );
+    m = ( a >> 16 ) * b;
 
-    if ( a < 0 )
-      a = -a;
-    if ( b < 0 )
-      b = -b;
+    lo = l + ( (FT_UInt32)m << 16 );
+    hi = ( m >> 16 ) + ( (FT_Int32)l >> 31 ) + ( lo < l );
 
-    ah = (FT_UInt32)( ( a >> 16 ) & 0xFFFFU );
-    al = (FT_UInt32)( a & 0xFFFFU );
+    /* divide the result by 2^14 with rounding */
+    l   = lo + 0x2000U + (FT_UInt32)( hi >> 31 );  /* rounding phase */
+    hi += ( l < lo );
 
-    lo    = al * b;
-    mid   = ah * b;
-    hi    = mid >> 16;
-    mid   = ( mid << 16 ) + ( 1 << 13 ); /* rounding */
-    lo   += mid;
-    if ( lo < mid )
-      hi += 1;
-
-    mid = ( lo >> 14 ) | ( hi << 18 );
-
-    return sign >= 0 ? (FT_Int32)mid : -(FT_Int32)mid;
+    return (FT_F26Dot6)( ( (FT_UInt32)hi << 18 ) | ( l >> 14 ) );
   }
 
 #endif  /* !TT_MulFix14 */
@@ -1329,15 +1320,12 @@
                FT_F2Dot14  bx,
                FT_F2Dot14  by )
   {
-    FT_Int64  temp1 = (FT_Int64)ax * bx;
-    FT_Int64  temp2 = (FT_Int64)ay * by;
+    FT_Int64  c = ADD_INT64( MUL_INT64( ax, bx ), MUL_INT64( ay, by ) );
 
 
-    temp1 += temp2;
-    temp2  = temp1 >> 63;
-    temp1 += 0x2000 + temp2;  /* rounding phase */
+    c += 0x2000 + ( c >> 63 );  /* rounding phase */
 
-    return (FT_F26Dot6)( temp1 >> 14 );
+    return (FT_F26Dot6)( c >> 14 );
   }
 
 #else
@@ -1348,11 +1336,11 @@
                FT_F2Dot14  bx,
                FT_F2Dot14  by )
   {
-    FT_Int32   m, s, hi1, hi2, hi;
+    FT_Int32   m, hi1, hi2, hi;
     FT_UInt32  l, lo1, lo2, lo;
 
 
-    /* compute ax*bx as 64-bit value */
+    /* compute ax*bx as 64-bit (hi_lo) value */
     l = (FT_UInt32)( ( ax & 0xFFFFU ) * bx );
     m = ( ax >> 16 ) * bx;
 
@@ -1371,12 +1359,7 @@
     hi = hi1 + hi2 + ( lo < lo1 );
 
     /* divide the result by 2^14 with rounding */
-    s   = hi >> 31;
-    l   = lo + (FT_UInt32)s;
-    hi += s + ( l < lo );
-    lo  = l;
-
-    l   = lo + 0x2000U;
+    l   = lo + 0x2000U + (FT_UInt32)( hi >> 31 );  /* rounding phase */
     hi += ( l < lo );
 
     return (FT_F26Dot6)( ( (FT_UInt32)hi << 18 ) | ( l >> 14 ) );
