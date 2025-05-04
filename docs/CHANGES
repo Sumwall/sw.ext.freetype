@@ -1,12 +1,20 @@
-CHANGES BETWEEN 2.13.3 and 2.13.4 (2025-Mmm-DD)
+CHANGES BETWEEN 2.13.3 and 2.14.0 (2025-Mmm-DD)
 
   I. IMPORTANT CHANGES
 
-  - Bitmap-only TrueType fonts  now ignore FT_LOAD_NO_BITMAP flag  and
-    proceed loading bitmaps instead of giving an error.  This behavior
-    is documented  and  implemented  for other bitmap-only fonts.  The
-    flag  was always meant  to suppress the bitmap strikes in favor of
-    outlines, not to ban them completely.
+  - A new  configuration macro `FT_CONFIG_OPTION_USE_HARFBUZZ_DYNAMIC`
+    is available to load the HarfBuzz library dynamically (in addition
+    to the standard static and  dynamic linking modes); both meson and
+    autotools  support have  been updated  accordingly (but  not CMake
+    yet).   Using this  new feature  makes  it possible  to avoid  the
+    circular dependency between HarfBuzz and FreeType.
+
+    A  side effect  of this  change is  that FreeType  no longer  uses
+    HarfBuzz header files (if HarfBuzz support is activated).  To make
+    this  work,  we  now  require at  least  HarfBuzz  version  2.6.8,
+    released in June 2020.
+
+    This code was contributed by Behdad Esfahbod.
 
   - The auto-hinter got new abilities.
 
@@ -18,13 +26,21 @@ CHANGES BETWEEN 2.13.3 and 2.13.4 (2025-Mmm-DD)
       that they don't degenerate to horizontal lines.
 
     Both  features use  a database,  which currently  has entries  for
-    Unicode characters lower than U+0180.  FreeType needs to access or
-    construct a proper Unicode character map from a given font to make
-    this work.
+    Unicode characters up to U+1FFF.   This covers scripts like Latin,
+    Cyrillic, or  Greek (but not  Arabic or Indic  scripts).  FreeType
+    needs to access a proper Unicode character map (or must be able to
+    construct such a cmap) of a given font to make this work.
 
     You need HarfBuzz 7.2.0 or newer for the new diacritic support.
 
-    This was Craig White's GSoC 2023 project.
+    The central algorithm and the foundation of this feature was Craig
+    White's GSoC 2023 project.
+
+  - Bitmap-only TrueType fonts  now ignore FT_LOAD_NO_BITMAP flag  and
+    proceed loading bitmaps instead of giving an error.  This behavior
+    is documented  and  implemented  for other bitmap-only fonts.  The
+    flag  was always meant  to suppress the bitmap strikes in favor of
+    outlines, not to ban them completely.
 
 
   III. MISCELLANEOUS
