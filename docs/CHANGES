@@ -25,9 +25,12 @@ CHANGES BETWEEN 2.13.3 and 2.14.0 (2025-Mmm-DD)
     . Tilde accent  glyphs get vertically stretched at  small sizes so
       that they don't degenerate to horizontal lines.
 
-    Both  features use  a database,  which currently  has entries  for
-    Unicode characters up to U+1FFF.   This covers scripts like Latin,
-    Cyrillic, or  Greek (but not  Arabic or Indic  scripts).  FreeType
+    . Diacritics directly attached to a base glyph (like the ogonek in
+      character 'ę') no longer distort the shape of the base glyph.
+
+    These features  use a  database (which  currently has  entries for
+    Unicode  characters up  to U+1FFF),  handling scripts  like Latin,
+    Cyrillic, or  Greek, but  not Arabic  or Indic  scripts.  FreeType
     needs to access a proper Unicode character map (or must be able to
     construct such a cmap) of a given font to make this work.
 
@@ -388,6 +391,10 @@ CHANGES BETWEEN 2.10.4 and 2.11.0 (2021-Jul-18)
         Dereference  an  `FT_OpaquePaint`   object  and  retrieve  the
         corresponding `FT_COLR_Paint`  object, which  contains details
         on how to draw the respective 'COLR' v1 `Paint` table.
+
+    Please note that FreeType does *not* provide rendering support for
+    'COLR' v1 but  only parsing of  this table.  You need  a dedicated
+    graphics library like Skia or Cairo for rendering.
 
 
   II. MISCELLANEOUS
