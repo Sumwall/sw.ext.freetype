@@ -5190,7 +5190,7 @@
     if ( exc->new_top < loop )
     {
       if ( exc->pedantic_hinting )
-        exc->error = FT_THROW( Invalid_Reference );
+        exc->error = FT_THROW( Too_Few_Arguments );
       goto Fail;
     }
 
@@ -5345,7 +5345,7 @@
     if ( exc->new_top < loop )
     {
       if ( exc->pedantic_hinting )
-        exc->error = FT_THROW( Invalid_Reference );
+        exc->error = FT_THROW( Too_Few_Arguments );
       goto Fail;
     }
 
@@ -5826,11 +5826,10 @@
 
   Fail:
     exc->GS.rp1 = exc->GS.rp0;
+    exc->GS.rp2 = point;
 
     if ( ( exc->opcode & 16 ) != 0 )
       exc->GS.rp0 = point;
-
-    exc->GS.rp2 = point;
   }
 
 
@@ -5849,15 +5848,21 @@
     FT_F26Dot6  distance;
 
 
-    if ( exc->new_top < loop                      ||
-         BOUNDS( exc->GS.rp0, exc->zp0.n_points ) )
+    if ( exc->new_top < loop )
+    {
+      if ( exc->pedantic_hinting )
+        exc->error = FT_THROW( Too_Few_Arguments );
+      goto Fail;
+    }
+
+    exc->new_top -= loop;
+
+    if ( BOUNDS( exc->GS.rp0, exc->zp0.n_points ) )
     {
       if ( exc->pedantic_hinting )
         exc->error = FT_THROW( Invalid_Reference );
       goto Fail;
     }
-
-    exc->new_top -= loop;
 
     while ( loop-- )
     {
@@ -6036,11 +6041,18 @@
     if ( exc->new_top < loop )
     {
       if ( exc->pedantic_hinting )
-        exc->error = FT_THROW( Invalid_Reference );
+        exc->error = FT_THROW( Too_Few_Arguments );
       goto Fail;
     }
 
     exc->new_top -= loop;
+
+    if ( BOUNDS( exc->GS.rp1, exc->zp0.n_points ) )
+    {
+      if ( exc->pedantic_hinting )
+        exc->error = FT_THROW( Invalid_Reference );
+      goto Fail;
+    }
 
     /*
      * We need to deal in a special way with the twilight zone.
@@ -6050,13 +6062,6 @@
     twilight = ( exc->GS.gep0 == 0 ||
                  exc->GS.gep1 == 0 ||
                  exc->GS.gep2 == 0 );
-
-    if ( BOUNDS( exc->GS.rp1, exc->zp0.n_points ) )
-    {
-      if ( exc->pedantic_hinting )
-        exc->error = FT_THROW( Invalid_Reference );
-      goto Fail;
-    }
 
     if ( twilight )
       orus_base = &exc->zp0.org[exc->GS.rp1];
@@ -6069,8 +6074,7 @@
     /*      fonts out there (e.g. [aeu]grave in monotype.ttf)   */
     /*      calling IP[] with bad values of rp[12].             */
     /*      Do something sane when this odd thing happens.      */
-    if ( BOUNDS( exc->GS.rp1, exc->zp0.n_points ) ||
-         BOUNDS( exc->GS.rp2, exc->zp1.n_points ) )
+    if ( BOUNDS( exc->GS.rp2, exc->zp1.n_points ) )
     {
       old_range = 0;
       cur_range = 0;
@@ -6499,8 +6503,8 @@
       break;
     }
 
-    /* check adjusted ppem range */
-    if ( P < 0 || P > 15 )
+    /* check applicable range of adjusted ppem */
+    if ( P & ~0xF )         /* P < 0 || P > 15 */
       return;
 
     P <<= 4;
@@ -6595,8 +6599,8 @@
       break;
     }
 
-    /* check adjusted ppem range */
-    if ( P < 0 || P > 15 )
+    /* check applicable range of adjusted ppem */
+    if ( P & ~0xF )         /* P < 0 || P > 15 */
       return;
 
     P <<= 4;

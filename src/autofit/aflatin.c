@@ -1638,7 +1638,8 @@
       FT_Pos     prev_max_on_coord = max_on_coord;
 
 
-      if ( FT_ABS( last->out_dir )  == major_dir &&
+      if ( !( point->flags & AF_FLAG_IGNORE )    &&
+           FT_ABS( last->out_dir )  == major_dir &&
            FT_ABS( point->out_dir ) == major_dir )
       {
         /* we are already on an edge, try to locate its start */
@@ -1697,13 +1698,17 @@
               max_on_coord = v;
           }
 
-          if ( point->out_dir != segment_dir || point == last )
+          if ( point->flags & AF_FLAG_IGNORE ||
+               point->out_dir != segment_dir ||
+               point == last )
           {
             /* check whether the new segment's start point is identical to */
             /* the previous segment's end point; for example, this might   */
             /* happen for spikes                                           */
 
-            if ( !prev_segment || segment->first != prev_segment->last )
+            if ( point->flags & AF_FLAG_IGNORE        ||
+                 !prev_segment                        ||
+                 segment->first != prev_segment->last )
             {
               /* points are different: we are just leaving an edge, thus */
               /* record a new segment                                    */
@@ -1863,7 +1868,8 @@
         /* if we are not on an edge, check whether the major direction */
         /* coincides with the current point's `out' direction, or      */
         /* whether we have a single-point contour                      */
-        if ( !on_edge                                  &&
+        if ( !( point->flags & AF_FLAG_IGNORE )        &&
+             !on_edge                                  &&
              ( FT_ABS( point->out_dir ) == major_dir ||
                point == point->prev                  ) )
         {
@@ -3023,144 +3029,6 @@
   }
 
 
-  static void
-  af_remove_segments_containing_point( AF_GlyphHints  hints,
-                                       AF_Point       point )
-  {
-    AF_AxisHints  axis     = &hints->axis[AF_DIMENSION_VERT];
-    AF_Segment    segments = axis->segments;
-
-    FT_UInt  i;
-
-
-    for ( i = 0; i < axis->num_segments; i++ )
-    {
-      AF_Segment  seg = &segments[i];
-      AF_Point    p   = seg->first;
-
-      FT_Bool  remove = 0;
-
-
-      while ( 1 )
-      {
-        if ( p == point )
-        {
-          remove = 1;
-          break;
-        }
-
-        if ( p == seg->last )
-          break;
-
-        p = p->next;
-      }
-
-      if ( remove )
-      {
-        /* First, check the first and last segment of the edge. */
-        AF_Edge  edge = seg->edge;
-
-
-        if ( !edge )
-          continue;
-
-        if ( edge->first == seg && edge->last == seg )
-        {
-          /* The edge only consists of the segment to be removed. */
-          /* Remove the edge.                                     */
-          *edge = axis->edges[--axis->num_edges];
-        }
-        else
-        {
-          if ( edge->first == seg )
-            edge->first = seg->edge_next;
-
-          if ( edge->last == seg )
-          {
-            edge->last = edge->first;
-
-            while ( edge->last && edge->last->edge_next != seg )
-              edge->last = edge->last->edge_next;
-          }
-        }
-
-        /* Now, delete the segment. */
-        *seg = axis->segments[--axis->num_segments];
-
-        i--; /* We have to check the new segment at this position. */
-      }
-    }
-  }
-
-
-  /* Remove all segments containing points on `limit_contour` */
-  /* and all higher contours.                                 */
-  static void
-  af_remove_top_points_from_edges( AF_GlyphHints  hints,
-                                   FT_Int         limit_contour )
-  {
-    FT_Pos  limit = hints->contour_y_minima[limit_contour];
-
-    FT_Int  contour;
-
-
-    for ( contour = 0; contour < hints->num_contours; contour++ )
-    {
-      FT_Pos  min_y = hints->contour_y_minima[contour];
-      FT_Pos  max_y = hints->contour_y_maxima[contour];
-
-
-      if ( min_y < max_y  &&
-           min_y >= limit )
-      {
-        AF_Point  first_point = hints->contours[contour];
-        AF_Point  p           = first_point;
-
-
-        do
-        {
-          p = p->next;
-          af_remove_segments_containing_point( hints, p );
-
-        } while ( p != first_point );
-      }
-    }
-  }
-
-
-  static void
-  af_remove_bottom_points_from_edges( AF_GlyphHints  hints,
-                                      FT_Int         limit_contour )
-  {
-    FT_Pos  limit = hints->contour_y_maxima[limit_contour];
-
-    FT_Int  contour;
-
-
-    for ( contour = 0; contour < hints->num_contours; contour++ )
-    {
-      FT_Pos  min_y = hints->contour_y_minima[contour];
-      FT_Pos  max_y = hints->contour_y_maxima[contour];
-
-
-      if ( min_y < max_y  &&
-           max_y <= limit )
-      {
-        AF_Point  first_point = hints->contours[contour];
-        AF_Point  p           = first_point;
-
-
-        do
-        {
-          p = p->next;
-          af_remove_segments_containing_point( hints, p );
-
-        } while ( p != first_point );
-      }
-    }
-  }
-
-
   /* While aligning edges to blue zones, make the auto-hinter */
   /* ignore the ones that are higher than `pos`.              */
   static void
@@ -3285,6 +3153,8 @@
     do
     {
       p = p->next;
+
+      p->flags |= AF_FLAG_IGNORE;
       if ( !( p->flags & AF_FLAG_CONTROL ) )
         p->flags |= AF_FLAG_TOUCH_Y;
 
@@ -3424,15 +3294,10 @@
     FT_TRACE4(( "af_latin_stretch_top_tilde: min measurement %ld\n",
                 min_measurement ));
 
-    /* To preserve the stretched shape we suppress any         */
-    /* auto-hinting if the tilde height is less than 4 pixels; */
-    /* we do this for all contours equal or above the vertical */
-    /* minimum of `tilde_contour`.                             */
-    /*                                                         */
-    /* The second part is to remove the affected points from   */
-    /* edges, done in `af_latin_hints_apply`.                  */
-    if ( height < 64 * 4 )
-      af_touch_top_contours( hints, tilde_contour );
+    /* To preserve the stretched shape we prevent that the tilde */
+    /* gets auto-hinted; we do this for all contours equal or    */
+    /* above the vertical minimum of `tilde_contour`.            */
+    af_touch_top_contours( hints, tilde_contour );
 
     /* XXX This is an important element of the algorithm; */
     /*     we need a description.                         */
@@ -3529,8 +3394,7 @@
     FT_TRACE4(( "af_latin_stretch_bottom_tilde: min measurement %ld\n",
                 min_measurement ));
 
-    if ( height < 64 * 4 )
-      af_touch_bottom_contours( hints, tilde_contour );
+    af_touch_bottom_contours( hints, tilde_contour );
 
     target_height = min_measurement + 64;
     if ( height >= target_height )
@@ -3720,7 +3584,11 @@
     const AF_ReverseMapEntry          *entry;
     const AF_AdjustmentDatabaseEntry  *db_entry = NULL;
 
-    FT_UInt32  adj_type = AF_ADJUST_NONE;
+    FT_Bool  adjust_top       = FALSE;
+    FT_Bool  adjust_below_top = FALSE;
+
+    FT_Bool  adjust_bottom       = FALSE;
+    FT_Bool  adjust_above_bottom = FALSE;
 
 
     FT_TRACE4(( "Entering"
@@ -3734,69 +3602,83 @@
     {
       db_entry = af_adjustment_database_lookup( entry->codepoint );
       if ( db_entry )
-        adj_type = db_entry->flags;
+      {
+        adjust_top       = !!( db_entry->flags & AF_ADJUST_UP );
+        adjust_below_top = !!( db_entry->flags & AF_ADJUST_UP2 );
+
+        adjust_bottom       = !!( db_entry->flags & AF_ADJUST_DOWN );
+        adjust_above_bottom = !!( db_entry->flags & AF_ADJUST_DOWN2 );
+      }
     }
 
-    if ( ( ( adj_type & ( AF_ADJUST_UP | AF_ADJUST_DOWN ) )   &&
-           hints->num_contours >= 2                           ) ||
-         ( ( adj_type & ( AF_ADJUST_UP2 | AF_ADJUST_DOWN2 ) ) &&
-           hints->num_contours >= 3                           ) )
+    if ( ( ( adjust_top || adjust_bottom ) &&
+           hints->num_contours >= 2        )             ||
+         ( ( adjust_below_top || adjust_above_bottom ) &&
+           hints->num_contours >= 3                    ) )
     {
       /* Recompute vertical extrema, this time acting on already */
       /* auto-hinted outlines.                                   */
       af_compute_vertical_extrema( hints );
     }
 
-    if ( ( ( adj_type & AF_ADJUST_UP ) && hints->num_contours >= 2 )  ||
-         ( ( adj_type & AF_ADJUST_UP2 ) && hints->num_contours >= 3 ) )
+    if ( ( adjust_top && hints->num_contours >= 2 )       ||
+         ( adjust_below_top && hints->num_contours >= 3 ) )
     {
-      FT_Int  high_contour = 0;
+      FT_Int  high_contour;
       FT_Pos  high_min_y;
       FT_Pos  high_max_y;
+      FT_Pos  high_height;
+
+      FT_Int  tilde_contour;
+      FT_Pos  tilde_min_y;
+      FT_Pos  tilde_max_y;
+      FT_Pos  tilde_height;
 
       FT_Int   contour;
       FT_Bool  horizontal_overlap;
 
-      FT_Pos  min_distance = 64;
+      FT_Pos  min_distance         = 64;
       FT_Pos  adjustment_amount;
+      FT_Pos  calculated_amount;
+      FT_Pos  centering_adjustment = 0;
+      FT_Pos  pos;
 
-      FT_Bool  is_tilde = FALSE;
+      FT_Bool  is_top_tilde =
+                 !!( db_entry->flags & AF_ADJUST_TILDE_TOP );
+      FT_Bool  is_below_top_tilde =
+                 !!( db_entry->flags & AF_ADJUST_TILDE_TOP2 );
 
-      FT_Bool  grid_aligned_after_adjustment;
-      FT_Pos   height;
-
-
-      if ( db_entry )
-        is_tilde = db_entry->flags & AF_ADJUST_TILDE_TOP;
 
       FT_TRACE4(( "af_glyph_hints_apply_vertical_separation_adjustments:\n"
-                  "  Applying vertical adjustment: AF_ADJUST_UP\n" ));
+                  "  Applying vertical adjustment: %s\n",
+                  adjust_top ? "AF_ADJUST_TOP" : "AF_ADJUST_TOP2" ));
 
-      high_contour = adj_type & AF_ADJUST_UP2
+      high_contour = adjust_below_top
                        ? af_find_second_highest_contour( hints )
                        : af_find_highest_contour( hints );
 
-      /* Check for a horizontal overlap between the top contour and the */
-      /* rest.  If there is no overlap, do not adjust.                  */
+      /* Check for a horizontal overlap between the high contour and the */
+      /* rest.  If there is no overlap, do not adjust.                   */
       horizontal_overlap =
         af_check_contour_horizontal_overlap( hints, high_contour );
       if ( !horizontal_overlap )
       {
-        FT_TRACE4(( "    Top contour does not horizontally overlap"
+        FT_TRACE4(( "    High contour does not horizontally overlap"
                     " with other contours.\n"
                     "    Skipping adjustment.\n" ));
         return;
       }
 
-      high_min_y = hints->contour_y_minima[high_contour];
-      high_max_y = hints->contour_y_maxima[high_contour];
+      high_min_y  = hints->contour_y_minima[high_contour];
+      high_max_y  = hints->contour_y_maxima[high_contour];
+      high_height = high_max_y - high_min_y;
 
-      if ( high_max_y - high_min_y > accent_height_limit )
+      if ( high_height > accent_height_limit )
       {
-        FT_TRACE4(( "    Top contour height (%.2f) exceeds accent height"
+        FT_TRACE4(( "    High contour height (%.2f) exceeds accent height"
                     " limit (%.2f).\n"
                     "    Skipping adjustment.\n",
-                    (double)( high_max_y - high_min_y ) / 64,
+                    (double)high_height / 64,
                     (double)accent_height_limit / 64 ));
         return;
       }
@@ -3830,41 +3712,61 @@
 
       adjustment_amount = 64 - min_distance;
 
-      /* The vertical separation adjustment potentially undoes a tilde  */
-      /* center alignment.  If the vertical adjustment would grid-align */
-      /* a tilde less than 3 pixels in height, add an offset to the     */
-      /* vertical adjustment to re-center it.                           */
-      grid_aligned_after_adjustment =
-        ( ( high_min_y + adjustment_amount ) % 64 == 0 );
-      height                        = high_max_y - high_min_y;
-
-      if ( is_tilde && grid_aligned_after_adjustment && height < 3 * 64 )
+      if ( is_top_tilde || is_below_top_tilde )
       {
-        FT_Pos  centering_adjustment =
-                  ( FT_PIX_ROUND( height ) - height ) / 2;
+        tilde_contour = adjust_top
+                          ? high_contour
+                          : ( is_below_top_tilde
+                                ? high_contour
+                                : af_find_highest_contour( hints ) );
 
+        tilde_min_y  = hints->contour_y_minima[tilde_contour];
+        tilde_max_y  = hints->contour_y_maxima[tilde_contour];
+        tilde_height = tilde_max_y - tilde_min_y;
 
-        adjustment_amount += centering_adjustment;
-        FT_TRACE4(( "    Additional centering: %ld\n",
-                    centering_adjustment ));
+        /* The vertical separation adjustment potentially undoes a */
+        /* tilde center alignment.  If it would grid-align a tilde */
+        /* less than 3 pixels in height, shift additionally to     */
+        /* re-center the tilde.                                    */
+
+        pos = high_min_y + adjustment_amount;
+        if ( adjust_below_top && is_top_tilde )
+          pos += high_height;
+
+        if ( pos % 64 == 0 && tilde_height < 3 * 64 )
+        {
+          centering_adjustment = ( FT_PIX_ROUND( tilde_height ) -
+                                   tilde_height ) / 2;
+
+          FT_TRACE4(( "    Additional tilde centering adjustment: %ld\n",
+                      centering_adjustment ));
+        }
       }
 
-      FT_TRACE4(( "    Calculated adjustment amount: %ld\n",
-                  adjustment_amount ));
+      if ( ( adjust_top && is_top_tilde )             ||
+           ( adjust_below_top && is_below_top_tilde ) )
+        calculated_amount = adjustment_amount + centering_adjustment;
+      else
+        calculated_amount = adjustment_amount;
 
-      if ( adjustment_amount > 64 )
-        FT_TRACE4(( "    Calculated adjustment amount %ld"
-                    " was more than threshold of 64.  Not adjusting\n",
-                    adjustment_amount ));
-      else if ( adjustment_amount > 0 )
+      /* allow a delta of 2/64px to handle rounding differences */
+      FT_TRACE4(( "    Calculated adjustment amount: %ld%s\n",
+                  calculated_amount,
+                  ( calculated_amount < -2                               ||
+                    ( adjustment_amount > 66 && calculated_amount > 66 ) )
+                      ? " (out of range [-2;66], not adjusting)" : "" ));
+
+      if ( calculated_amount != 0                                 &&
+           calculated_amount >= -2                                &&
+           ( calculated_amount <= 66 || adjustment_amount <= 66 ) )
       {
         /* Value 8 is heuristic. */
-        FT_Pos  height_delta = ( high_max_y - high_min_y ) / 8;
+        FT_Pos  height_delta = high_height / 8;
         FT_Pos  min_y_limit  = high_min_y - height_delta;
 
 
-        FT_TRACE4(( "    Pushing top contour %ld units up\n",
-                    adjustment_amount ));
+        FT_TRACE4(( "    Pushing high contour %ld units up\n",
+                    calculated_amount ));
 
         /* While we use only a single contour (the 'high' one) for    */
         /* computing `adjustment_amount`, we apply it to all contours */
@@ -3873,35 +3775,52 @@
         /* the Czech ring accent or the second acute accent in the    */
         /* Hungarian double acute accent.                             */
         af_move_contours_up( hints, min_y_limit, adjustment_amount );
+
+        if ( adjust_below_top && is_top_tilde )
+        {
+          FT_TRACE4(( "    Pushing top tilde %ld units up\n",
+                      centering_adjustment ));
+
+          af_move_contours_up( hints,
+                               min_y_limit + high_height,
+                               centering_adjustment );
+        }
       }
     }
 
-    if ( ( ( adj_type & AF_ADJUST_DOWN ) && hints->num_contours >= 2 )  ||
-         ( ( adj_type & AF_ADJUST_DOWN2 ) && hints->num_contours >= 3 ) )
+    if ( ( adjust_bottom && hints->num_contours >= 2 )       ||
+         ( adjust_above_bottom && hints->num_contours >= 3 ) )
     {
-      FT_Int  low_contour = 0;
+      FT_Int  low_contour;
       FT_Pos  low_min_y;
       FT_Pos  low_max_y;
+      FT_Pos  low_height;
+
+      FT_Int  tilde_contour;
+      FT_Pos  tilde_min_y;
+      FT_Pos  tilde_max_y;
+      FT_Pos  tilde_height;
 
       FT_Int   contour;
       FT_Bool  horizontal_overlap;
 
-      FT_Pos  min_distance = 64;
+      FT_Pos  min_distance         = 64;
       FT_Pos  adjustment_amount;
+      FT_Pos  calculated_amount;
+      FT_Pos  centering_adjustment = 0;
+      FT_Pos  pos;
 
-      FT_Bool  is_tilde = FALSE;
+      FT_Bool  is_bottom_tilde =
+                 !!( db_entry->flags & AF_ADJUST_TILDE_BOTTOM );
+      FT_Bool  is_above_bottom_tilde =
+                 !!( db_entry->flags & AF_ADJUST_TILDE_BOTTOM2 );
 
-      FT_Bool  grid_aligned_after_adjustment;
-      FT_Pos   height;
-
-
-      if ( db_entry )
-        is_tilde = db_entry->flags & AF_ADJUST_TILDE_BOTTOM;
 
       FT_TRACE4(( "af_glyph_hints_apply_vertical_separation_adjustments:\n"
-                  "  Applying vertical adjustment: AF_ADJUST_DOWN\n" ));
+                  "  Applying vertical adjustment: %s\n",
+                  adjust_bottom ? "AF_ADJUST_DOWN": "AF_ADJUST_DOWN2" ));
 
-      low_contour = adj_type & AF_ADJUST_DOWN2
+      low_contour = adjust_above_bottom
                       ? af_find_second_lowest_contour( hints )
                       : af_find_lowest_contour( hints );
 
@@ -3909,21 +3828,22 @@
         af_check_contour_horizontal_overlap( hints, low_contour );
       if ( !horizontal_overlap )
       {
-        FT_TRACE4(( "    Bottom contour does not horizontally overlap"
+        FT_TRACE4(( "    Low contour does not horizontally overlap"
                     " with other contours.\n"
                     "    Skipping adjustment.\n" ));
         return;
       }
 
-      low_min_y = hints->contour_y_minima[low_contour];
-      low_max_y = hints->contour_y_maxima[low_contour];
+      low_min_y  = hints->contour_y_minima[low_contour];
+      low_max_y  = hints->contour_y_maxima[low_contour];
+      low_height = low_max_y - low_min_y;
 
-      if ( low_max_y - low_min_y > accent_height_limit )
+      if ( low_height > accent_height_limit )
       {
-        FT_TRACE4(( "    Bottom contour height (%.2f) exceeds accent height"
+        FT_TRACE4(( "    Low contour height (%.2f) exceeds accent height"
                     " limit (%.2f).\n"
                     "    Skipping adjustment.\n",
-                    (double)( low_max_y - low_min_y ) / 64,
+                    (double)low_height / 64,
                     (double)accent_height_limit / 64 ));
         return;
       }
@@ -3950,46 +3870,74 @@
 
       adjustment_amount = 64 - min_distance;
 
-      grid_aligned_after_adjustment =
-        ( ( low_max_y - adjustment_amount ) % 64 == 0 );
-      height                        = low_max_y - low_min_y;
-
-      if ( is_tilde && grid_aligned_after_adjustment && height < 3 * 64 )
+      if ( is_bottom_tilde || is_above_bottom_tilde )
       {
-        FT_Pos  centering_adjustment =
-                  ( FT_PIX_ROUND( height ) - height ) / 2;
+        tilde_contour = adjust_bottom
+                          ? low_contour
+                          : ( is_above_bottom_tilde
+                                ? low_contour
+                                : af_find_lowest_contour( hints ) );
 
+        tilde_min_y  = hints->contour_y_minima[tilde_contour];
+        tilde_max_y  = hints->contour_y_maxima[tilde_contour];
+        tilde_height = tilde_max_y - tilde_min_y;
 
-        adjustment_amount += centering_adjustment;
-        FT_TRACE4(( "    Additional centering: %ld\n",
-                    centering_adjustment ));
+        pos = low_max_y - adjustment_amount;
+        if ( adjust_above_bottom && is_bottom_tilde )
+          pos -= low_height;
+
+        if ( pos % 64 == 0 && tilde_height < 3 * 64 )
+        {
+          centering_adjustment = ( FT_PIX_ROUND( tilde_height ) -
+                                   tilde_height ) / 2;
+
+          FT_TRACE4(( "    Additional tilde centering adjustment: %ld\n",
+                      centering_adjustment ));
+        }
       }
 
-      FT_TRACE4(( "    Calculated adjustment amount: %ld\n",
-                  adjustment_amount ));
+      if ( ( adjust_bottom && is_bottom_tilde )             ||
+           ( adjust_above_bottom && is_above_bottom_tilde ) )
+        calculated_amount = adjustment_amount + centering_adjustment;
+      else
+        calculated_amount = adjustment_amount;
 
-      if ( adjustment_amount > 64 )
-        FT_TRACE4(( "    Calculated adjustment amount %ld"
-                    " was more than threshold of 64.  Not adjusting\n",
-                    adjustment_amount ));
-      else if ( adjustment_amount > 0 )
+      FT_TRACE4(( "    Calculated adjustment amount: %ld%s\n",
+                  calculated_amount,
+                  ( calculated_amount < -2                               ||
+                    ( adjustment_amount > 66 && calculated_amount > 66 ) )
+                      ? " (out of range [-2;66], not adjusting)" : "" ));
+
+      if ( calculated_amount != 0                                 &&
+           calculated_amount >= -2                                &&
+           ( calculated_amount <= 66 || adjustment_amount <= 66 ) )
       {
-        FT_Pos  height_delta = ( low_max_y - low_min_y ) / 8;
+        FT_Pos  height_delta = low_height / 8;
         FT_Pos  max_y_limit  = low_max_y + height_delta;
 
 
-        FT_TRACE4(( "    Pushing bottom contour %ld units down\n",
-                    adjustment_amount ));
+        FT_TRACE4(( "    Pushing low contour %ld units down\n",
+                    calculated_amount ));
 
         af_move_contours_down( hints, max_y_limit, adjustment_amount );
+
+        if ( adjust_above_bottom && is_bottom_tilde )
+        {
+          FT_TRACE4(( "    Pushing bottom tilde %ld units down\n",
+                      centering_adjustment ));
+
+          af_move_contours_down( hints,
+                                 max_y_limit - low_height,
+                                 centering_adjustment );
+        }
       }
     }
 
 #ifdef FT_DEBUG_LEVEL_TRACE
-    if ( !( ( ( adj_type & ( AF_ADJUST_UP | AF_ADJUST_DOWN ) )   &&
-              hints->num_contours >= 2                           ) ||
-            ( ( adj_type & ( AF_ADJUST_UP2 | AF_ADJUST_DOWN2 ) ) &&
-              hints->num_contours >= 3                           ) ) )
+    if ( !( ( ( adjust_top || adjust_bottom ) &&
+              hints->num_contours >= 2        )             ||
+            ( ( adjust_below_top || adjust_above_bottom ) &&
+              hints->num_contours >= 3                    ) ) )
       FT_TRACE4(( "af_glyph_hints_apply_vertical_separation_adjustments:\n"
                   "  No vertical adjustment applied\n" ));
 #endif
@@ -4264,13 +4212,15 @@
   af_latin_hint_edges( AF_GlyphHints  hints,
                        AF_Dimension   dim )
   {
-    AF_AxisHints  axis       = &hints->axis[dim];
-    AF_Edge       edges      = axis->edges;
-    AF_Edge       edge_limit = FT_OFFSET( edges, axis->num_edges );
-    FT_PtrDist    n_edges;
-    AF_Edge       edge;
-    AF_Edge       anchor     = NULL;
-    FT_Int        has_serifs = 0;
+    AF_AxisHints  axis = &hints->axis[dim];
+
+    AF_Edge     edges      = axis->edges;
+    AF_Edge     edge_limit = FT_OFFSET( edges, axis->num_edges );
+    AF_Edge     edge;
+    FT_PtrDist  n_edges;
+
+    AF_Edge  anchor             = NULL;
+    FT_Bool  has_non_stem_edges = 0;
 
     AF_StyleClass   style_class  = hints->metrics->style_class;
     AF_ScriptClass  script_class = af_script_classes[style_class->script];
@@ -4397,7 +4347,7 @@
       edge2 = edge->link;
       if ( !edge2 )
       {
-        has_serifs++;
+        has_non_stem_edges = TRUE;
         continue;
       }
 
@@ -4674,7 +4624,7 @@
       }
     }
 
-    if ( has_serifs || !anchor )
+    if ( has_non_stem_edges || !anchor )
     {
       /*
        * now hint the remaining edges (serifs and single) in order
@@ -4692,9 +4642,75 @@
 
         if ( edge->serif )
         {
+          AF_Edge  e, top, bottom;
+          FT_Pos   min_pos, max_pos;
+
+
+          /* Check whether we have a real serif -- if there are  */
+          /* other edges with overlapping (or enclosed) segments */
+          /* between the primary and serif edge, we have not.    */
+          /*                                                     */
+          /* Such a situation might happen if an accent is very  */
+          /* near to its base glyph (for example, Vietnamese     */
+          /* uppercase letters with two accents in `arial.ttf`), */
+          /* and the segment detection algorithm classifies the  */
+          /* top of the accent incorrectly as a serif.           */
           delta = edge->serif->opos - edge->opos;
           if ( delta < 0 )
+          {
             delta = -delta;
+
+            top    = edge;
+            bottom = edge->serif;
+          }
+          else
+          {
+            top    = edge->serif;
+            bottom = edge;
+          }
+
+          if ( delta < 64 + 32 )
+          {
+            /* take care of outline orientation while computing extrema */
+            min_pos = FT_MIN( FT_MIN( FT_MIN( top->first->first->v,
+                                              top->first->last->v ),
+                                      FT_MIN( top->last->first->v,
+                                              top->last->last->v ) ),
+                              FT_MIN( FT_MIN( bottom->first->first->v,
+                                              bottom->first->last->v ),
+                                      FT_MIN( bottom->last->first->v,
+                                              bottom->last->last->v ) ) );
+            max_pos = FT_MAX( FT_MAX( FT_MAX( top->first->first->v,
+                                              top->first->last->v ),
+                                      FT_MAX( top->last->first->v,
+                                              top->last->last->v ) ),
+                              FT_MAX( FT_MAX( bottom->first->first->v,
+                                              bottom->first->last->v ),
+                                      FT_MAX( bottom->last->first->v,
+                                              bottom->last->last->v ) ) );
+
+            for ( e = bottom + 1; e < top; e++ )
+            {
+              FT_Pos  e_min = FT_MIN( FT_MIN( e->first->first->v,
+                                              e->first->last->v ),
+                                      FT_MIN( e->last->first->v,
+                                              e->last->last->v ) );
+              FT_Pos  e_max = FT_MAX( FT_MAX( e->first->first->v,
+                                              e->first->last->v ),
+                                      FT_MAX( e->last->first->v,
+                                              e->last->last->v ) );
+
+              if ( !( ( e_min < min_pos && e_max < min_pos ) ||
+                      ( e_min > max_pos && e_max > max_pos ) ) )
+              {
+                delta = 1000;  /* not a real serif */
+                break;
+              }
+            }
+
+            if ( delta == 1000 )
+              continue;
+          }
         }
 
         if ( delta < 64 + 16 )
@@ -5023,19 +5039,6 @@
           af_latin_ignore_bottom( hints,
                                   small_top_blue, small_bottom_blue );
       }
-
-      /* Second part of making everything of a top tilde and above (or */
-      /* a bottom tilde and below) be ignored by the auto-hinter.      */
-      if ( is_top_tilde || is_below_top_tilde )
-        af_remove_top_points_from_edges( hints,
-                                         is_top_tilde
-                                           ? top_tilde_contour
-                                           : below_top_tilde_contour );
-      if ( is_bottom_tilde || is_above_bottom_tilde )
-        af_remove_bottom_points_from_edges( hints,
-                                            is_bottom_tilde
-                                              ? bottom_tilde_contour
-                                              : above_bottom_tilde_contour );
 
       if ( error )
         goto Exit;
