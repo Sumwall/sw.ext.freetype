@@ -460,9 +460,9 @@
         }
 
         if ( AF_LATIN_IS_TOP_BLUE( bs ) )
-          best_y_extremum = FT_INT_MIN;
+          best_y_extremum = FT_LONG_MIN;
         else
-          best_y_extremum = FT_INT_MAX;
+          best_y_extremum = FT_LONG_MAX;
 
         /* iterate over all glyph elements of the character cluster */
         /* and get the data of the `biggest' one                    */
@@ -885,8 +885,8 @@
 
         } /* end for loop */
 
-        if ( !( best_y_extremum == FT_INT_MIN ||
-                best_y_extremum == FT_INT_MAX ) )
+        if ( !( best_y_extremum == FT_LONG_MIN ||
+                best_y_extremum == FT_LONG_MAX ) )
         {
           if ( best_round )
             rounds[num_rounds++] = best_y_extremum;
@@ -1163,7 +1163,7 @@
     }
 
     af_reverse_character_map_new( &metrics->root.reverse_charmap,
-                                  metrics->root.globals );
+                                  &metrics->root );
 
   Exit:
     face->charmap = oldmap;
@@ -2846,8 +2846,8 @@
 
     for ( contour = 0; contour < hints->num_contours; contour++ )
     {
-      FT_Pos  min_y = FT_INT_MAX;
-      FT_Pos  max_y = FT_INT_MIN;
+      FT_Pos  min_y = FT_LONG_MAX;
+      FT_Pos  max_y = FT_LONG_MIN;
 
       AF_Point  first_point = hints->contours[contour];
       AF_Point  point       = first_point;
@@ -2878,8 +2878,8 @@
   af_find_highest_contour( AF_GlyphHints  hints )
   {
     FT_Int  highest_contour = 0;
-    FT_Pos  highest_min_y   = FT_INT_MAX;
-    FT_Pos  highest_max_y   = FT_INT_MIN;
+    FT_Pos  highest_min_y   = FT_LONG_MAX;
+    FT_Pos  highest_max_y   = FT_LONG_MIN;
 
     FT_Int  contour;
 
@@ -2919,7 +2919,7 @@
     FT_Pos  highest_min_y;
 
     FT_Int  second_highest_contour = 0;
-    FT_Pos  second_highest_max_y   = FT_INT_MIN;
+    FT_Pos  second_highest_max_y   = FT_LONG_MIN;
 
     FT_Int  contour;
 
@@ -2961,8 +2961,8 @@
   af_find_lowest_contour( AF_GlyphHints  hints )
   {
     FT_Int  lowest_contour = 0;
-    FT_Pos  lowest_min_y   = FT_INT_MAX;
-    FT_Pos  lowest_max_y   = FT_INT_MIN;
+    FT_Pos  lowest_min_y   = FT_LONG_MAX;
+    FT_Pos  lowest_max_y   = FT_LONG_MIN;
 
     FT_Int  contour;
 
@@ -2994,7 +2994,7 @@
     FT_Pos  lowest_max_y;
 
     FT_Int  second_lowest_contour = 0;
-    FT_Pos  second_lowest_min_y   = FT_INT_MAX;
+    FT_Pos  second_lowest_min_y   = FT_LONG_MAX;
 
     FT_Int  contour;
 
@@ -3218,7 +3218,7 @@
     FT_Pos  min_y = hints->contour_y_minima[tilde_contour];
     FT_Pos  max_y = hints->contour_y_maxima[tilde_contour];
 
-    FT_Pos   min_measurement;
+    FT_Pos   min_measurement   = FT_LONG_MAX;
     FT_Bool  measurement_taken = FALSE;
 
     FT_Pos  height;
@@ -3232,7 +3232,7 @@
     FT_TRACE4(( "af_latin_stretch_top_tilde: min y: %ld, max y: %ld\n",
                 min_y, max_y ));
 
-    height             = max_y - min_y;
+    height             = SUB_LONG( max_y, min_y );
     extremum_threshold = height / 8;    /* Value 8 is heuristic. */
 
     /* Find points that are local vertical round extrema, and which   */
@@ -3331,7 +3331,7 @@
     FT_Pos  min_y = hints->contour_y_minima[tilde_contour];
     FT_Pos  max_y = hints->contour_y_maxima[tilde_contour];
 
-    FT_Pos   min_measurement;
+    FT_Pos   min_measurement   = FT_LONG_MAX;
     FT_Bool  measurement_taken = FALSE;
 
     FT_Pos  height;
@@ -3345,7 +3345,7 @@
     FT_TRACE4(( "af_latin_stretch_bottom_tilde: min y: %ld, max y: %ld\n",
                 min_y, max_y ));
 
-    height             = max_y - min_y;
+    height             = SUB_LONG( max_y, min_y );
     extremum_threshold = height / 8;
 
     do
@@ -3522,10 +3522,10 @@
   af_check_contour_horizontal_overlap( AF_GlyphHints  hints,
                                        FT_Int         contour_index )
   {
-    FT_Pos  contour_max_x = FT_INT_MIN;
-    FT_Pos  contour_min_x = FT_INT_MAX;
-    FT_Pos  others_max_x  = FT_INT_MIN;
-    FT_Pos  others_min_x  = FT_INT_MAX;
+    FT_Pos  contour_max_x = FT_LONG_MIN;
+    FT_Pos  contour_min_x = FT_LONG_MAX;
+    FT_Pos  others_max_x  = FT_LONG_MIN;
+    FT_Pos  others_min_x  = FT_LONG_MAX;
 
     FT_Int  contour;
 
@@ -3575,20 +3575,20 @@
 
   static void
   af_glyph_hints_apply_vertical_separation_adjustments(
-    AF_GlyphHints           hints,
-    AF_Dimension            dim,
-    FT_Int                  glyph_index,
-    FT_Pos                  accent_height_limit,
-    AF_ReverseCharacterMap  reverse_charmap )
+    AF_GlyphHints  hints,
+    AF_Dimension   dim,
+    FT_Int         glyph_index,
+    FT_Pos         accent_height_limit,
+    FT_Hash        reverse_charmap )
   {
-    const AF_ReverseMapEntry          *entry;
-    const AF_AdjustmentDatabaseEntry  *db_entry = NULL;
-
     FT_Bool  adjust_top       = FALSE;
     FT_Bool  adjust_below_top = FALSE;
 
     FT_Bool  adjust_bottom       = FALSE;
     FT_Bool  adjust_above_bottom = FALSE;
+
+    size_t*    val;
+    FT_UInt32  adj_type = AF_ADJUST_NONE;
 
 
     FT_TRACE4(( "Entering"
@@ -3597,17 +3597,21 @@
     if ( dim != AF_DIMENSION_VERT )
       return;
 
-    entry = af_reverse_character_map_lookup( reverse_charmap, glyph_index );
-    if ( entry )
+    val = ft_hash_num_lookup( glyph_index, reverse_charmap );
+    if ( val )
     {
-      db_entry = af_adjustment_database_lookup( entry->codepoint );
-      if ( db_entry )
-      {
-        adjust_top       = !!( db_entry->flags & AF_ADJUST_UP );
-        adjust_below_top = !!( db_entry->flags & AF_ADJUST_UP2 );
+      FT_Int  codepoint = *val;
 
-        adjust_bottom       = !!( db_entry->flags & AF_ADJUST_DOWN );
-        adjust_above_bottom = !!( db_entry->flags & AF_ADJUST_DOWN2 );
+
+      adj_type = af_adjustment_database_lookup( codepoint );
+
+      if ( adj_type )
+      {
+        adjust_top       = !!( adj_type & AF_ADJUST_UP );
+        adjust_below_top = !!( adj_type & AF_ADJUST_UP2 );
+
+        adjust_bottom       = !!( adj_type & AF_ADJUST_DOWN );
+        adjust_above_bottom = !!( adj_type & AF_ADJUST_DOWN2 );
       }
     }
 
@@ -3643,10 +3647,8 @@
       FT_Pos  centering_adjustment = 0;
       FT_Pos  pos;
 
-      FT_Bool  is_top_tilde =
-                 !!( db_entry->flags & AF_ADJUST_TILDE_TOP );
-      FT_Bool  is_below_top_tilde =
-                 !!( db_entry->flags & AF_ADJUST_TILDE_TOP2 );
+      FT_Bool  is_top_tilde       = !!( adj_type & AF_ADJUST_TILDE_TOP );
+      FT_Bool  is_below_top_tilde = !!( adj_type & AF_ADJUST_TILDE_TOP2 );
 
 
       FT_TRACE4(( "af_glyph_hints_apply_vertical_separation_adjustments:\n"
@@ -3811,9 +3813,9 @@
       FT_Pos  pos;
 
       FT_Bool  is_bottom_tilde =
-                 !!( db_entry->flags & AF_ADJUST_TILDE_BOTTOM );
+                 !!( adj_type & AF_ADJUST_TILDE_BOTTOM );
       FT_Bool  is_above_bottom_tilde =
-                 !!( db_entry->flags & AF_ADJUST_TILDE_BOTTOM2 );
+                 !!( adj_type & AF_ADJUST_TILDE_BOTTOM2 );
 
 
       FT_TRACE4(( "af_glyph_hints_apply_vertical_separation_adjustments:\n"
@@ -4865,7 +4867,7 @@
 
     if ( AF_HINTS_DO_VERTICAL( hints ) )
     {
-      const AF_ReverseMapEntry  *entry;
+      size_t*  val;
 
       FT_Int  top_tilde_contour    = 0;
       FT_Int  bottom_tilde_contour = 0;
@@ -4899,40 +4901,31 @@
       FT_Pos  y_offset;
 
 
-      entry = af_reverse_character_map_lookup( metrics->root.reverse_charmap,
-                                               glyph_index );
-      if ( entry )
+      val = ft_hash_num_lookup( glyph_index,
+                                metrics->root.reverse_charmap );
+      if ( val )
       {
-        const AF_AdjustmentDatabaseEntry  *db_entry;
+        FT_Int     codepoint = *val;
+        FT_UInt32  adj_type  = af_adjustment_database_lookup( codepoint );
 
 
-        db_entry = af_adjustment_database_lookup( entry->codepoint );
-        if ( db_entry )
+        if ( adj_type )
         {
-          have_flags = !!db_entry->flags;
+          have_flags = !!adj_type;
 
-          is_top_tilde    = !!( db_entry->flags     &
-                                AF_ADJUST_TILDE_TOP );
-          is_bottom_tilde = !!( db_entry->flags        &
-                                AF_ADJUST_TILDE_BOTTOM );
+          is_top_tilde    = !!( adj_type & AF_ADJUST_TILDE_TOP );
+          is_bottom_tilde = !!( adj_type & AF_ADJUST_TILDE_BOTTOM );
 
-          is_below_top_tilde    = !!( db_entry->flags      &
-                                      AF_ADJUST_TILDE_TOP2 );
-          is_above_bottom_tilde = !!( db_entry->flags         &
-                                      AF_ADJUST_TILDE_BOTTOM2 );
+          is_below_top_tilde    = !!( adj_type & AF_ADJUST_TILDE_TOP2 );
+          is_above_bottom_tilde = !!( adj_type & AF_ADJUST_TILDE_BOTTOM2 );
 
-          ignore_capital_top    = !!( db_entry->flags       &
-                                      AF_IGNORE_CAPITAL_TOP );
-          ignore_capital_bottom = !!( db_entry->flags          &
-                                      AF_IGNORE_CAPITAL_BOTTOM );
+          ignore_capital_top    = !!( adj_type & AF_IGNORE_CAPITAL_TOP );
+          ignore_capital_bottom = !!( adj_type & AF_IGNORE_CAPITAL_BOTTOM );
 
-          ignore_small_top    = !!( db_entry->flags     &
-                                    AF_IGNORE_SMALL_TOP );
-          ignore_small_bottom = !!( db_entry->flags        &
-                                    AF_IGNORE_SMALL_BOTTOM );
+          ignore_small_top    = !!( adj_type & AF_IGNORE_SMALL_TOP );
+          ignore_small_bottom = !!( adj_type & AF_IGNORE_SMALL_BOTTOM );
 
-          do_height_check = !( db_entry->flags           &
-                               AF_ADJUST_NO_HEIGHT_CHECK );
+          do_height_check = !( adj_type & AF_ADJUST_NO_HEIGHT_CHECK );
         }
       }
 

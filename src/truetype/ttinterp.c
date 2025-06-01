@@ -301,14 +301,13 @@
                    TT_Face         face,
                    TT_Size         size )
   {
-    FT_Int          i;
-    TT_MaxProfile*  maxp;
-    FT_Error        error;
-    FT_Memory       memory = exec->memory;
+    FT_Int     i;
+    FT_Long    stackSize;
+    FT_Error   error;
+    FT_Memory  memory = exec->memory;
 
 
     exec->face = face;
-    maxp       = &face->max_profile;
     exec->size = size;
 
     if ( size )
@@ -349,11 +348,10 @@
 
     /* XXX: We reserve a little more elements on the stack to deal safely */
     /*      with broken fonts like arialbs, courbs, timesbs, etc.         */
-    if ( FT_QRENEW_ARRAY( exec->stack,
-                          exec->stackSize,
-                          maxp->maxStackElements + 32 ) )
+    stackSize = face->max_profile.maxStackElements + 32;
+    if ( FT_QRENEW_ARRAY( exec->stack, exec->stackSize, stackSize ) )
       return error;
-    exec->stackSize = maxp->maxStackElements + 32;
+    exec->stackSize = stackSize;
 
     /* free previous glyph code range */
     FT_FREE( exec->glyphIns );
@@ -5530,7 +5528,7 @@
     if ( exc->GS.gep0 == 0 )   /* If in twilight zone */
     {
       exc->zp0.org[point].x = TT_MulFix14( distance,
-                                             exc->GS.freeVector.x );
+                                           exc->GS.freeVector.x );
       exc->zp0.org[point].y = TT_MulFix14( distance,
                                            exc->GS.freeVector.y );
       exc->zp0.cur[point]   = exc->zp0.org[point];
@@ -6951,7 +6949,6 @@
                 " to %ld\n", exc->neg_jump_counter_max ));
 
     /* set PPEM and CVT functions */
-    exc->tt_metrics.ratio = 0;
     if ( exc->metrics.x_ppem != exc->metrics.y_ppem )
     {
       /* non-square pixels, use the stretched routines */

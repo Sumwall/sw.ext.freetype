@@ -107,31 +107,19 @@ FT_BEGIN_HEADER
 #define AF_ADJUST_NONE  0x00
 
 
-  typedef struct  AF_AdjustmentDatabaseEntry_
-  {
-    FT_UInt32  codepoint;
-    FT_UInt32  flags;
-
-  } AF_AdjustmentDatabaseEntry;
-
-
-  FT_LOCAL( const AF_AdjustmentDatabaseEntry* )
+  FT_LOCAL( FT_UInt32 )
   af_adjustment_database_lookup( FT_UInt32  codepoint );
-
-  FT_LOCAL( const AF_ReverseMapEntry* )
-  af_reverse_character_map_lookup( AF_ReverseCharacterMap  map,
-                                   FT_Int                  glyph_index );
 
   /* Allocate and populate the reverse character map, */
   /* using the character map within the face.         */
   FT_LOCAL( FT_Error )
-  af_reverse_character_map_new( AF_ReverseCharacterMap  *map,
-                                AF_FaceGlobals           globals );
+  af_reverse_character_map_new( FT_Hash         *map,
+                                AF_StyleMetrics  metrics );
 
   /* Free the reverse character map. */
   FT_LOCAL( FT_Error )
-  af_reverse_character_map_done( AF_ReverseCharacterMap  map,
-                                 FT_Memory               memory );
+  af_reverse_character_map_done( FT_Hash    map,
+                                 FT_Memory  memory );
 
 
 FT_END_HEADER

@@ -35,6 +35,7 @@
 
 #include <freetype/freetype.h>
 #include <freetype/ftoutln.h>
+#include <freetype/internal/fthash.h>
 #include <freetype/internal/ftobjs.h>
 #include <freetype/internal/ftdebug.h>
 
@@ -407,26 +408,6 @@ extern void*  af_debug_hints_;
   typedef struct AF_FaceGlobalsRec_*  AF_FaceGlobals;
 
 
-  /* Store a mapping from glyphs to unicode codepoints. */
-  /* See `afadjust.c` for details.                      */
-  typedef struct  AF_ReverseMapEntry_
-  {
-    FT_Int     glyph_index;
-    FT_UInt32  codepoint;
-
-  } AF_ReverseMapEntry;
-
-
-  typedef struct  AF_ReverseCharacterMapRec_
-  {
-    FT_Long              length;
-    AF_ReverseMapEntry  *entries;
-
-  } AF_ReverseCharacterMapRec;
-
-  typedef struct  AF_ReverseCharacterMapRec_*  AF_ReverseCharacterMap;
-
-
   /* This is the main structure that combines everything.  Autofit modules */
   /* specific to writing systems derive their structures from it, for      */
   /* example `AF_LatinMetrics'.                                            */
@@ -439,7 +420,7 @@ extern void*  af_debug_hints_;
 
     AF_FaceGlobals  globals;    /* to access properties */
 
-    AF_ReverseCharacterMap  reverse_charmap;
+    FT_Hash  reverse_charmap;
 
   } AF_StyleMetricsRec;
 

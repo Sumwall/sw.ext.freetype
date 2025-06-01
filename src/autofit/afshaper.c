@@ -89,7 +89,8 @@
 #define SCRIPT( s, S, d, h, H, ss )  h,
 
 
-  static const hb_script_t  scripts[] =
+  FT_LOCAL_ARRAY_DEF( hb_script_t )
+  af_hb_scripts[] =
   {
 #include "afscript.h"
   };
@@ -127,7 +128,7 @@
     face = hb( font_get_face )( globals->hb_font );
 
     coverage_tags = coverages[style_class->coverage];
-    script        = scripts[style_class->script];
+    script        = af_hb_scripts[style_class->script];
 
     /* Convert a HarfBuzz script tag into the corresponding OpenType */
     /* tag or tags -- some Indic scripts like Devanagari have an old */
@@ -148,8 +149,8 @@
       script_tags[2] = tags_count > 2 ? tags[2] : HB_TAG_NONE;
     }
 
-    /* If the second tag is HB_OT_TAG_DEFAULT_SCRIPT, change that to     */
-    /* HB_TAG_NONE except for the default script.                        */
+    /* If the second tag is HB_OT_TAG_DEFAULT_SCRIPT, change that to */
+    /* HB_TAG_NONE except for the default script.                    */
     if ( default_script )
     {
       if ( script_tags[0] == HB_TAG_NONE )
@@ -204,7 +205,7 @@
                                              NULL,
                                              NULL,
                                              NULL,
-                                          gsub_glyphs );
+                                             gsub_glyphs );
     }
 
 #ifdef FT_DEBUG_LEVEL_TRACE

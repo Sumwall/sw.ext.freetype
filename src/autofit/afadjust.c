@@ -32,6 +32,14 @@
 #define FT_COMPONENT  afadjust
 
 
+  typedef struct  AF_AdjustmentDatabaseEntry_
+  {
+    FT_UInt32  codepoint;
+    FT_UInt32  flags;
+
+  } AF_AdjustmentDatabaseEntry;
+
+
   /*
     All entries in this list must be sorted by ascending Unicode code
     points.  The table entries are 3 numbers consisting of:
@@ -1135,17 +1143,17 @@
   };
 
 
-  FT_LOCAL_DEF( const AF_AdjustmentDatabaseEntry* )
+  FT_LOCAL_DEF( FT_UInt32 )
   af_adjustment_database_lookup( FT_UInt32  codepoint )
   {
     /* Binary search for database entry */
-    FT_Int  low  = 0;
-    FT_Int  high = AF_ADJUSTMENT_DATABASE_LENGTH - 1;
+    FT_Offset  low  = 0;
+    FT_Offset  high = AF_ADJUSTMENT_DATABASE_LENGTH - 1;
 
 
     while ( high >= low )
     {
-      FT_Int     mid           = ( low + high ) / 2;
+      FT_Offset  mid           = ( low + high ) / 2;
       FT_UInt32  mid_codepoint = adjustment_database[mid].codepoint;
 
 
@@ -1154,98 +1162,10 @@
       else if ( mid_codepoint > codepoint )
         high = mid - 1;
       else
-        return &adjustment_database[mid];
+        return adjustment_database[mid].flags;
     }
 
-    return NULL;
-  }
-
-
-  /* `qsort` compare function for reverse character map. */
-  FT_COMPARE_DEF( FT_Int )
-  af_reverse_character_map_entry_compare( const void  *a,
-                                          const void  *b )
-  {
-    const AF_ReverseMapEntry  entry_a = *((const AF_ReverseMapEntry *)a);
-    const AF_ReverseMapEntry  entry_b = *((const AF_ReverseMapEntry *)b);
-
-
-    return entry_a.glyph_index < entry_b.glyph_index
-           ? -1
-           : entry_a.glyph_index > entry_b.glyph_index
-               ? 1
-               : entry_a.codepoint < entry_b.codepoint
-                   ? -1
-                   : entry_a.codepoint > entry_b.codepoint
-                       ? 1
-                       : 0;
-  }
-
-
-  FT_LOCAL_DEF( const AF_ReverseMapEntry* )
-  af_reverse_character_map_lookup( AF_ReverseCharacterMap  map,
-                                   FT_Int                  glyph_index )
-  {
-    FT_Int   low, high;
-    FT_Long  length;
-
-
-    if ( !map )
-      return NULL;
-
-    length = map->length;
-
-    /* Binary search for reverse character map entry. */
-    low  = 0;
-    high = length - 1;
-
-    while ( high >= low )
-    {
-      FT_Int  mid             = ( high + low ) / 2;
-      FT_Int  mid_glyph_index = map->entries[mid].glyph_index;
-
-
-      if ( glyph_index < mid_glyph_index )
-        high = mid - 1;
-      else if ( glyph_index > mid_glyph_index )
-        low = mid + 1;
-      else if (low != mid)
-        /* We want the first occurrence of `glyph_index` */
-        /* (i.e., the one with the lowest array index).  */
-        high = mid;
-      else
-        return &map->entries[mid];
-    }
-
-    return NULL;
-  }
-
-
-  /* Prepare to add one more entry to the reverse character map.   */
-  /* This is a helper function for `af_reverse_character_map_new`. */
-  static FT_Error
-  af_reverse_character_map_expand( AF_ReverseCharacterMap  map,
-                                   FT_Long                *capacity,
-                                   FT_Memory               memory )
-  {
-    FT_Error  error;
-
-
-    if ( map->length < *capacity )
-      return FT_Err_Ok;
-
-    if ( map->length == *capacity )
-    {
-      FT_Long  new_capacity = *capacity + *capacity / 2;
-
-
-      if ( FT_RENEW_ARRAY( map->entries, map->length, new_capacity ) )
-        return error;
-
-      *capacity = new_capacity;
-    }
-
-    return FT_Err_Ok;
+    return 0;
   }
 
 
@@ -1302,7 +1222,7 @@
                                   hb_face_t      *hb_face,
                                   hb_codepoint_t  glyph,
                                   hb_set_t       *gsub_lookups,
-                                  hb_set_t       *result )
+                                  hb_set_t       *helper_result )
   {
     hb_codepoint_t  lookup_index = HB_SET_VALUE_INVALID;
 
@@ -1336,7 +1256,7 @@
           lookup_done = TRUE;
 
         for ( n = 0; n < alternates_count; n++ )
-          hb( set_add )( result, alternates[n] );
+          hb( set_add )( helper_result, alternates[n] );
       }
     }
   }
@@ -1349,11 +1269,14 @@
                            hb_font_t      *hb_font,
                            hb_codepoint_t  glyph,
                            hb_set_t       *gsub_lookups,
-                           hb_set_t       *result )
+                           hb_set_t       *helper_result,
+                           hb_set_t       *glyph_alternates )
   {
-    hb_face_t  *hb_face       = hb( font_get_face )( hb_font );
-    hb_set_t   *helper_result = hb( set_create )();
+    hb_face_t  *hb_face = hb( font_get_face )( hb_font );
 
+
+    hb( set_clear )( helper_result );
+    hb( set_clear )( glyph_alternates );
 
     /* Seed `helper_result` with `glyph` itself, then get all possible */
     /* values.  Note that we can't use `hb_set_next` to control the    */
@@ -1369,7 +1292,7 @@
       hb( set_next )( helper_result, &elem );
 
       /* Don't process already handled glyphs again. */
-      if ( !hb( set_has )( result, elem ) )
+      if ( !hb( set_has )( glyph_alternates, elem ) )
       {
         /* This call updates the glyph set in `helper_result`. */
         af_get_glyph_alternates_helper( globals,
@@ -1377,37 +1300,55 @@
                                         elem,
                                         gsub_lookups,
                                         helper_result );
-        hb( set_add )( result, elem );
+        hb( set_add )( glyph_alternates, elem );
       }
 
       hb( set_del )( helper_result, elem );
     }
-
-    hb( set_destroy )( helper_result );
   }
 
 #endif /* FT_CONFIG_OPTION_USE_HARFBUZZ */
 
 
   FT_LOCAL_DEF( FT_Error )
-  af_reverse_character_map_new( AF_ReverseCharacterMap  *map,
-                                AF_FaceGlobals           globals )
+  af_reverse_character_map_new( FT_Hash         *map,
+                                AF_StyleMetrics  metrics )
   {
     FT_Error  error;
 
-    FT_Face    face   = globals->face;
-    FT_Memory  memory = face->memory;
+    AF_FaceGlobals  globals = metrics->globals;
+    FT_Face         face    = globals->face;
+    FT_Memory       memory  = face->memory;
 
     FT_CharMap  old_charmap;
 
-    FT_Long  capacity;
+    FT_UInt32  codepoint;
+    FT_Offset  i;
 
+#ifdef FT_CONFIG_OPTION_USE_HARFBUZZ
+    /* The next four variables are initialized to avoid compiler warnings. */
+    hb_font_t  *hb_font = NULL;
+    hb_face_t  *hb_face = NULL;
+
+    hb_set_t  *glyph_alternates = NULL;
+    hb_set_t  *gsub_lookups     = NULL;
+    hb_set_t  *helper_result    = NULL;
+
+    hb_script_t  script;
+
+    unsigned int  script_count   = 1;
+    hb_tag_t      script_tags[2] = { HB_TAG_NONE, HB_TAG_NONE };
+
+    hb_codepoint_t  glyph;
+#endif
+
+
+    FT_TRACE4(( "af_reverse_character_map_new:"
+                " building reverse character map (style `%s')\n",
+                af_style_names[metrics->style_class->style] ));
 
     /* Search for a unicode charmap.           */
     /* If there isn't one, create a blank map. */
-
-    FT_TRACE4(( "af_reverse_character_map_new:"
-                " building reverse character map\n" ));
 
     /* Back up `face->charmap` because `find_unicode_charmap` sets it. */
     old_charmap = face->charmap;
@@ -1416,184 +1357,150 @@
       goto Exit;
 
     *map = NULL;
-    if ( FT_NEW( *map ) )
+    if ( FT_QNEW( *map ) )
       goto Exit;
 
-    /* Start with a capacity of 10 entries. */
-    capacity         = 10;
-    ( *map )->length = 0;
-
-    if ( FT_NEW_ARRAY( ( *map )->entries, capacity ) )
+    error = ft_hash_num_init( *map, memory );
+    if ( error )
       goto Exit;
 
 #ifdef FT_CONFIG_OPTION_USE_HARFBUZZ
-
     if ( hb( version_atleast )( 7, 2, 0 ) )
     {
       /* No need to check whether HarfBuzz has allocation issues; */
       /* it continues to work in such cases and simply returns    */
       /* 'empty' objects that do nothing.                         */
 
-      hb_font_t  *hb_font = globals->hb_font;
-      hb_face_t  *hb_face = hb( font_get_face )( hb_font );
+      hb_font = globals->hb_font;
+      hb_face = hb( font_get_face )( hb_font );
 
-      hb_set_t  *result_set   = hb( set_create )();
-      hb_set_t  *gsub_lookups = hb( set_create )();
+      glyph_alternates = hb( set_create )();
+      gsub_lookups     = hb( set_create )();
+      helper_result    = hb( set_create )();
 
-      FT_UInt32  codepoint;
-      FT_UInt    glyph_index;
+      script = af_hb_scripts[metrics->style_class->script];
 
-      FT_ULong  i;
+      hb( ot_tags_from_script_and_language )( script, NULL,
+                                              &script_count, script_tags,
+                                              NULL, NULL );
 
-      AF_ReverseMapEntry  *map_limit;
-
-
-      /* Compute set of all GSUB lookups. */
+      /* Compute set of all script-specific GSUB lookups. */
       hb( ot_layout_collect_lookups )( hb_face,
                                        HB_OT_TAG_GSUB,
-                                       NULL, NULL, NULL,
+                                       script_tags, NULL, NULL,
                                        gsub_lookups );
+    }
+#endif /* FT_CONFIG_OPTION_USE_HARFBUZZ */
 
-      /* Find all glyph alternates of the code points in  */
-      /* the adjustment database and put them into `map`. */
-      for ( i = 0; i < AF_ADJUSTMENT_DATABASE_LENGTH; i++ )
+    /* Insert all glyphs from the database that have entries in the cmap. */
+    for ( i = 0; i < AF_ADJUSTMENT_DATABASE_LENGTH; i++ )
+    {
+      FT_Int  cmap_glyph;
+
+
+      /*
+        We cannot restrict `codepoint` to character ranges; we have no
+        control what data the script-specific portion of the GSUB table
+        actually holds.
+
+        An example is `arial.ttf` version 7.00; in this font, there are
+        lookups for Cyrillic (lookup 43), Greek (lookup 44), and Latin
+        (lookup 45) that map capital letter glyphs to small capital glyphs.
+        It is tempting to expect that script-specific versions of the 'c2sc'
+        feature only use script-specific lookups.  However, this is not the
+        case in this font: the feature uses all three lookups regardless of
+        the script.
+
+        The auto-hinter, while assigning glyphs to styles, uses the first
+        coverage result it encounters for a particular glyph.  For example,
+        if the coverage for Cyrillic is tested before Latin (as is currently
+        the case), glyphs without a cmap entry that are covered in 'c2sc'
+        are treated as Cyrillic.
+
+        If we now look at glyph 3498, which is a small-caps version of the
+        Latin character 'A grave' (U+00C0, glyph 172), we can see that it is
+        registered as belonging to a Cyrillic style due to the algorithm
+        just described.  As a result, checking only for characters from the
+        Latin range would miss this glyph; we thus have to test all
+        character codes in the database.
+      */
+      codepoint = adjustment_database[i].codepoint;
+
+      cmap_glyph = FT_Get_Char_Index( face, codepoint );
+      if ( cmap_glyph == 0 )
+        continue;
+
+      error = ft_hash_num_insert( cmap_glyph, codepoint, *map, memory );
+      if ( error )
+        goto Exit;
+
+#ifdef FT_CONFIG_OPTION_USE_HARFBUZZ
+      if ( hb( version_atleast )( 7, 2, 0 ) )
       {
-        FT_UInt  cmap_glyph;
-
-        hb_codepoint_t  glyph;
-
-
-        codepoint  = adjustment_database[i].codepoint;
-        cmap_glyph = FT_Get_Char_Index( face, codepoint );
-
+        /* Find all glyph alternates of the code points in  */
+        /* the adjustment database and put them into `map`. */
         af_get_glyph_alternates( globals,
                                  hb_font,
                                  cmap_glyph,
                                  gsub_lookups,
-                                 result_set );
+                                 helper_result,
+                                 glyph_alternates );
 
         glyph = HB_SET_VALUE_INVALID;
-        while ( hb( set_next )( result_set, &glyph ) )
+        while ( hb( set_next )( glyph_alternates, &glyph ) )
         {
-          FT_Long  insert_point;
+          /* OpenType features like 'unic' map lowercase letter glyphs  */
+          /* to uppercase forms (and vice versa), which could lead to   */
+          /* the use of a wrong entry in the adjustment database.  For  */
+          /* this reason we prioritize cmap entries.                    */
+          /*                                                            */
+          /* XXX Note, however, that this cannot cover all cases since  */
+          /* there might be contradictory entries for glyphs not in the */
+          /* cmap.  A possible solution might be to specially mark      */
+          /* pairs of related lowercase and uppercase characters in the */
+          /* adjustment database that have diacritics on different      */
+          /* vertical sides (for example, U+0122 'Ģ' and U+0123 'ģ').   */
+          /* The auto-hinter could then perform a topological analysis  */
+          /* to do the right thing.                                     */
 
-
-          error = af_reverse_character_map_expand( *map, &capacity, memory );
-          if ( error )
-            goto Exit;
-
-          insert_point = ( *map )->length;
-
-          ( *map )->length++;
-          ( *map )->entries[insert_point].glyph_index = glyph;
-          ( *map )->entries[insert_point].codepoint   = codepoint;
-        }
-
-        hb( set_clear )( result_set );
-      }
-
-      hb( set_destroy )( result_set );
-      hb( set_destroy )( gsub_lookups );
-
-      ft_qsort( ( *map )->entries,
-                ( *map )->length,
-                sizeof ( AF_ReverseMapEntry ),
-                af_reverse_character_map_entry_compare );
-
-      /* OpenType features like 'unic' map lowercase letter glyphs to    */
-      /* uppercase forms (and vice versa), which could lead to the use   */
-      /* of a wrong entry in the adjustment database.  For this reason   */
-      /* we prioritize cmap entries.                                     */
-      /*                                                                 */
-      /* XXX Note, however, that this cannot cover all cases since there */
-      /* might be contradictory entries for glyphs not in the cmap.  A   */
-      /* possible solution might be to specially mark pairs of related   */
-      /* lowercase and uppercase characters in the adjustment database   */
-      /* that have diacritics on different vertical sides (for example,  */
-      /* U+0122 'Ģ' and U+0123 'ģ').  The auto-hinter could then perform */
-      /* a topological analysis to do the right thing.                   */
-
-      codepoint = FT_Get_First_Char( face, &glyph_index );
-      map_limit = ( *map )->entries + ( *map )->length;
-      while ( glyph_index )
-      {
-        AF_ReverseMapEntry  *entry;
-
-
-        entry = (AF_ReverseMapEntry*)
-                  af_reverse_character_map_lookup( *map, glyph_index );
-        if ( entry )
-        {
-          FT_Int  idx = entry->glyph_index;
-
-
-          while ( entry < map_limit         &&
-                  entry->glyph_index == idx )
+          if ( !( globals->glyph_styles[glyph] & AF_HAS_CMAP_ENTRY ) )
           {
-            entry->codepoint = codepoint;
-            entry++;
+            error = ft_hash_num_insert( glyph, codepoint, *map, memory );
+            if ( error )
+              goto Exit;
           }
         }
-
-        codepoint = FT_Get_Next_Char( face, codepoint, &glyph_index );
       }
-    }
-    else
-
 #endif /* FT_CONFIG_OPTION_USE_HARFBUZZ */
 
-    {
-      FT_UInt  i;
-      FT_Long  insert_point;
-
-
-      for ( i = 0; i < AF_ADJUSTMENT_DATABASE_LENGTH; i++ )
-      {
-        FT_UInt32  codepoint = adjustment_database[i].codepoint;
-        FT_Int     glyph     = FT_Get_Char_Index( face, codepoint );
-
-
-        if ( glyph == 0 )
-          continue;
-
-        error = af_reverse_character_map_expand( *map, &capacity, memory );
-        if ( error )
-          goto Exit;
-
-        insert_point = ( *map )-> length;
-
-        ( *map )->length++;
-        ( *map )->entries[insert_point].glyph_index = glyph;
-        ( *map )->entries[insert_point].codepoint   = codepoint;
-      }
-
-      ft_qsort( ( *map )->entries,
-                ( *map )->length,
-                sizeof ( AF_ReverseMapEntry ),
-                af_reverse_character_map_entry_compare );
     }
 
+#ifdef FT_CONFIG_OPTION_USE_HARFBUZZ
+    if ( hb( version_atleast )( 7, 2, 0 ) )
+    {
+      hb( set_destroy )( glyph_alternates );
+      hb( set_destroy )( gsub_lookups );
+      hb( set_destroy )( helper_result );
+    }
+#endif
+
     FT_TRACE4(( "    reverse character map built successfully"
-                " with %ld entries\n", ( *map )->length ));
+                " with %d entries\n", ( *map )->used ));
 
 #ifdef FT_DEBUG_LEVEL_TRACE
 
     {
-      FT_Long  i;
+      FT_UInt  cnt;
 
 
       FT_TRACE7(( "       gidx   code    flags\n" ));
                /* "      XXXXX  0xXXXX  XXXXXXXXXXX..." */
       FT_TRACE7(( "     ------------------------------\n" ));
 
-      for ( i = 0; i < ( *map )->length; i++ )
+      for ( cnt = 0; cnt < globals->glyph_count; cnt++ )
       {
-        FT_Long  glyph_index = ( *map )->entries[i].glyph_index;
-        FT_Int   codepoint   = ( *map )->entries[i].codepoint;
-
-        const AF_AdjustmentDatabaseEntry  *db_entry =
-          af_adjustment_database_lookup( codepoint );
-        FT_UInt32                          adj_type;
+        size_t*    val;
+        FT_UInt32  adj_type;
 
         const char*  flag_names[] =
         {
@@ -1620,10 +1527,14 @@
         size_t  j;
 
 
-        if ( !db_entry )
+        val = ft_hash_num_lookup( cnt, *map );
+        if ( !val )
           continue;
+        codepoint = *val;
 
-        adj_type = db_entry->flags;
+        adj_type = af_adjustment_database_lookup( codepoint );
+        if ( !adj_type )
+          continue;
 
         flag_str[0] = '\0';
         need_comma  = 0;
@@ -1640,8 +1551,7 @@
           }
         }
 
-        FT_TRACE7(( "      %5ld  0x%04X  %s\n",
-                    glyph_index, codepoint, flag_str ));
+        FT_TRACE7(( "      %5d  0x%04X  %s\n", cnt, codepoint, flag_str ));
       }
     }
 
@@ -1657,7 +1567,7 @@
                   " Using blank map.\n" ));
 
       if ( *map )
-        FT_FREE( ( *map )->entries );
+        ft_hash_num_free( *map, memory );
 
       FT_FREE( *map );
       *map = NULL;
@@ -1669,11 +1579,11 @@
 
 
   FT_LOCAL_DEF( FT_Error )
-  af_reverse_character_map_done( AF_ReverseCharacterMap  map,
-                                 FT_Memory               memory )
+  af_reverse_character_map_done( FT_Hash    map,
+                                 FT_Memory  memory )
   {
     if ( map )
-      FT_FREE( map->entries );
+      ft_hash_num_free( map, memory );
     FT_FREE( map );
 
     return FT_Err_Ok;

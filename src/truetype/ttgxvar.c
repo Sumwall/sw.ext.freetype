@@ -1007,28 +1007,181 @@
   }
 
 
+  static FT_Fixed
+  tt_calculate_scalar( GX_AxisCoords  axis,
+                       FT_UInt        axisCount,
+                       FT_Fixed*      normalizedcoords )
+  {
+    FT_Fixed  scalar = 0x10000L;
+    FT_UInt   j;
+
+
+    /* Inner loop steps through axes in this region. */
+    for ( j = 0; j < axisCount; j++, axis++ )
+    {
+      FT_Fixed  ncv = normalizedcoords[j];
+
+
+      /* Compute the scalar contribution of this axis, */
+      /* with peak of 0 used for invalid axes.         */
+      if ( axis->peakCoord == ncv ||
+           axis->peakCoord == 0   )
+        continue;
+
+      /* Ignore this region if coordinates are out of range. */
+      else if ( ncv <= axis->startCoord ||
+                ncv >= axis->endCoord   )
+      {
+        scalar = 0;
+        break;
+      }
+
+      /* Cumulative product of all the axis scalars. */
+      else if ( ncv < axis->peakCoord )
+        scalar = FT_MulDiv( scalar,
+                            ncv - axis->startCoord,
+                            axis->peakCoord - axis->startCoord );
+      else   /* ncv > axis->peakCoord */
+        scalar = FT_MulDiv( scalar,
+                            axis->endCoord - ncv,
+                            axis->endCoord - axis->peakCoord );
+
+    } /* per-axis loop */
+
+    return scalar;
+  }
+
+
+  static FT_Int64
+  ft_mul_add_delta_scalar( FT_Int64  returnValue,
+                           FT_Int32  delta,
+                           FT_Int32  scalar )
+  {
+
+#ifdef FT_INT64
+
+    return returnValue + (FT_Int64)delta * scalar;
+
+#else /* !FT_INT64 */
+
+    if ( (FT_UInt32)( delta + 0x8000 ) <= 0x20000 )
+    {
+      /* Fast path: multiplication result fits into 32 bits. */
+
+      FT_Int32  lo = delta * scalar;
+
+
+      returnValue.lo += (FT_UInt32)lo;
+
+      if ( returnValue.lo < (FT_UInt32)lo )
+        returnValue.hi += ( lo < 0 ) ? 0 : 1;
+
+      if ( lo < 0 )
+        returnValue.hi -= 1;
+
+      return returnValue;
+    }
+    else
+    {
+      /* Slow path: full 32x32 -> 64-bit signed multiplication. */
+
+      FT_Int64 product;
+
+      /* Get absolute values. */
+      FT_UInt32  a = ( delta < 0 ) ? -delta : delta;
+      FT_UInt32  b = ( scalar < 0 ) ? -scalar : scalar;
+
+      /* Prepare unsigned multiplication. */
+      FT_UInt32  a_lo = a & 0xFFFF;
+      FT_UInt32  a_hi = a >> 16;
+
+      FT_UInt32  b_lo = b & 0xFFFF;
+      FT_UInt32  b_hi = b >> 16;
+
+      /* Partial products. */
+      FT_UInt32  p0 = a_lo * b_lo;
+      FT_UInt32  p1 = a_lo * b_hi;
+      FT_UInt32  p2 = a_hi * b_lo;
+      FT_UInt32  p3 = a_hi * b_hi;
+
+      /* Combine: result = p3 << 32 + (p1 + p2) << 16 + p0 */
+      FT_UInt32  mid       = p1 + p2;
+      FT_UInt32  mid_carry = ( mid < p1 );
+
+      FT_UInt32  carry;
+
+
+      product.lo = ( mid << 16 ) + ( p0 & 0xFFFF );
+      carry      = ( product.lo < ( p0 & 0xFFFF ) ) ? 1 : 0;
+      product.hi = p3 + ( mid >> 16 ) + mid_carry + carry;
+
+      /* If result should be negative, negate. */
+      if ( ( delta < 0 ) ^ ( scalar < 0 ) )
+      {
+        product.lo = ~product.lo + 1;
+        product.hi = ~product.hi + ( product.lo == 0 ? 1 : 0 );
+      }
+
+      /* Add to `returnValue`. */
+      returnValue.lo += product.lo;
+      if ( returnValue.lo < product.lo )
+        returnValue.hi++;
+      returnValue.hi += product.hi;
+
+      return returnValue;
+    }
+
+#endif /* !FT_INT64 */
+
+  }
+
+
+  static FT_ItemVarDelta
+  ft_round_and_shift16( FT_Int64  returnValue )
+  {
+
+#ifdef FT_INT64
+
+    return (FT_ItemVarDelta)( returnValue + 0x8000L ) >> 16;
+
+#else /* !FT_INT64 */
+
+    FT_UInt hi = returnValue.hi;
+    FT_UInt lo = returnValue.lo;
+
+    FT_UInt delta;
+
+
+    /* Add 0x8000 to round. */
+    lo += 0x8000;
+    if ( lo < 0x8000 )  /* overflow occurred */
+      hi += 1;
+
+    /* Shift right by 16 bits. */
+    delta = ( hi << 16 ) | ( lo >> 16 );
+
+    return (FT_ItemVarDelta)delta;
+
+#endif /* !FT_INT64 */
+
+  }
+
+
   FT_LOCAL_DEF( FT_ItemVarDelta )
   tt_var_get_item_delta( FT_Face          face,        /* TT_Face */
                          GX_ItemVarStore  itemStore,
                          FT_UInt          outerIndex,
                          FT_UInt          innerIndex )
   {
-    TT_Face    ttface = (TT_Face)face;
-    FT_Stream  stream = FT_FACE_STREAM( face );
-    FT_Memory  memory = stream->memory;
-    FT_Error   error  = FT_Err_Ok;
+    TT_Face  ttface = (TT_Face)face;
 
-    GX_ItemVarData    varData;
-    FT_ItemVarDelta*  deltaSet = NULL;
-    FT_ItemVarDelta   deltaSetStack[16];
+    GX_ItemVarData  varData;
 
-    FT_Fixed*  scalars = NULL;
-    FT_Fixed   scalarsStack[16];
-
-    FT_UInt          master, j;
-    FT_ItemVarDelta  returnValue = 0;
-    FT_UInt          per_region_size;
-    FT_Byte*         bytes;
+    FT_UInt   master;
+    FT_Int64  returnValue = FT_INT64_ZERO;
+    FT_UInt   shift_base  = 1;
+    FT_UInt   per_region_size;
+    FT_Byte*  bytes;
 
 
     if ( !ttface->blend || !ttface->blend->normalizedcoords )
@@ -1053,113 +1206,63 @@
     if ( varData->regionIdxCount == 0 )
       return 0; /* Avoid "applying zero offset to null pointer". */
 
-    if ( varData->regionIdxCount < 16 )
-    {
-      deltaSet = deltaSetStack;
-      scalars  = scalarsStack;
-    }
-    else
-    {
-      if ( FT_QNEW_ARRAY( deltaSet, varData->regionIdxCount ) )
-        goto Exit;
-      if ( FT_QNEW_ARRAY( scalars, varData->regionIdxCount ) )
-        goto Exit;
-    }
-
     /* Parse delta set.                                            */
     /*                                                             */
     /* Deltas are (word_delta_count + region_idx_count) bytes each */
     /* if `longWords` isn't set, and twice as much otherwise.      */
     per_region_size = varData->wordDeltaCount + varData->regionIdxCount;
     if ( varData->longWords )
+    {
+      shift_base       = 2;
       per_region_size *= 2;
+    }
 
     bytes = varData->deltaSet + per_region_size * innerIndex;
-
-    if ( varData->longWords )
-    {
-      for ( master = 0; master < varData->wordDeltaCount; master++ )
-        deltaSet[master] = FT_NEXT_LONG( bytes );
-      for ( ; master < varData->regionIdxCount; master++ )
-        deltaSet[master] = FT_NEXT_SHORT( bytes );
-    }
-    else
-    {
-      for ( master = 0; master < varData->wordDeltaCount; master++ )
-        deltaSet[master] = FT_NEXT_SHORT( bytes );
-      for ( ; master < varData->regionIdxCount; master++ )
-        deltaSet[master] = FT_NEXT_CHAR( bytes );
-    }
 
     /* outer loop steps through master designs to be blended */
     for ( master = 0; master < varData->regionIdxCount; master++ )
     {
-      FT_Fixed  scalar      = 0x10000L;
-      FT_UInt   regionIndex = varData->regionIndices[master];
+      FT_UInt  regionIndex = varData->regionIndices[master];
 
       GX_AxisCoords  axis = itemStore->varRegionList[regionIndex].axisList;
 
+      FT_Fixed  scalar = tt_calculate_scalar(
+                           axis,
+                           itemStore->axisCount,
+                           ttface->blend->normalizedcoords );
 
-      /* inner loop steps through axes in this region */
-      for ( j = 0; j < itemStore->axisCount; j++, axis++ )
+
+      if ( scalar )
       {
-        FT_Fixed  ncv = ttface->blend->normalizedcoords[j];
+        FT_Int  delta;
 
 
-        /* compute the scalar contribution of this axis */
-        /* with peak of 0 used for invalid axes         */
-        if ( axis->peakCoord == ncv ||
-             axis->peakCoord == 0   )
-          continue;
-
-        /* ignore this region if coords are out of range */
-        else if ( ncv <= axis->startCoord ||
-                  ncv >= axis->endCoord   )
+        if ( varData->longWords )
         {
-          scalar = 0;
-          break;
+          if ( master < varData->wordDeltaCount )
+            delta = FT_NEXT_LONG( bytes );
+          else
+            delta = FT_NEXT_SHORT( bytes );
+        }
+        else
+        {
+          if ( master < varData->wordDeltaCount )
+            delta = FT_NEXT_SHORT( bytes );
+          else
+            delta = FT_NEXT_CHAR( bytes );
         }
 
-        /* cumulative product of all the axis scalars */
-        else if ( ncv < axis->peakCoord )
-          scalar = FT_MulDiv( scalar,
-                              ncv - axis->startCoord,
-                              axis->peakCoord - axis->startCoord );
-        else   /* ncv > axis->peakCoord */
-          scalar = FT_MulDiv( scalar,
-                              axis->endCoord - ncv,
-                              axis->endCoord - axis->peakCoord );
-
-      } /* per-axis loop */
-
-      scalars[master] = scalar;
+        returnValue = ft_mul_add_delta_scalar( returnValue, delta, scalar );
+      }
+      else
+      {
+        /* Branch-free, yay. */
+        bytes += shift_base << ( master < varData->wordDeltaCount );
+      }
 
     } /* per-region loop */
 
-
-    /* Compute the scaled delta for this region.
-     *
-     * From: https://docs.microsoft.com/en-us/typography/opentype/spec/otvarcommonformats#item-variation-store-header-and-item-variation-data-subtables:
-     *
-     *   `Fixed` is a 32-bit (16.16) type and, in the general case, requires
-     *   32-bit deltas.  As described above, the `DeltaSet` record can
-     *   accommodate deltas that are, logically, either 16-bit or 32-bit.
-     *   When scaled deltas are applied to `Fixed` values, the `Fixed` value
-     *   is treated like a 32-bit integer.
-     *
-     * `FT_MulAddFix` internally uses 64-bit precision; it thus can handle
-     * deltas ranging from small 8-bit to large 32-bit values that are
-     * applied to 16.16 `FT_Fixed` / OpenType `Fixed` values.
-     */
-    returnValue = FT_MulAddFix( scalars, deltaSet, varData->regionIdxCount );
-
-  Exit:
-    if ( scalars != scalarsStack )
-      FT_FREE( scalars );
-    if ( deltaSet != deltaSetStack )
-      FT_FREE( deltaSet );
-
-    return returnValue;
+    return ft_round_and_shift16( returnValue );
   }
 
 
@@ -2837,10 +2940,14 @@
     } manageCvt;
 
 
-    face->doblend = FALSE;
-
     if ( !face->blend )
     {
+      if ( !num_coords )
+      {
+        face->doblend = FALSE;
+        goto Exit;
+      }
+
       if ( FT_SET_ERROR( TT_Get_MM_Var( FT_FACE( face ), NULL ) ) )
         goto Exit;
     }
@@ -2953,11 +3060,7 @@
 
       /* return value -1 indicates `no change' */
       if ( !have_diff )
-      {
-        face->doblend = TRUE;
-
         return -1;
-      }
 
       for ( ; i < mmvar->num_axis; i++ )
       {
@@ -2986,7 +3089,15 @@
                         blend->normalizedcoords,
                         blend->coords );
 
-    face->doblend = TRUE;
+    face->doblend = FALSE;
+    for ( i = 0; i < blend->num_axis; i++ )
+    {
+      if ( blend->normalizedcoords[i] )
+      {
+        face->doblend = TRUE;
+        break;
+      }
+    }
 
     if ( face->cvt )
     {
@@ -3054,7 +3165,24 @@
                    FT_UInt    num_coords,
                    FT_Fixed*  coords )
   {
-    return tt_set_mm_blend( (TT_Face)face, num_coords, coords, 1 );
+    FT_Error  error = FT_Err_Ok;
+
+
+    error = tt_set_mm_blend( (TT_Face)face, num_coords, coords, 1 );
+    if ( error == FT_Err_Ok )
+    {
+      FT_UInt  i;
+
+
+      for ( i = 0; i < num_coords; i++ )
+        if ( coords[i] )
+        {
+          error = -2; /* -2 means is_variable. */
+          break;
+        }
+    }
+
+    return error;
   }
 
 
@@ -3275,6 +3403,15 @@
     if ( error )
       goto Exit;
 
+    for ( i = 0; i < num_coords; i++ )
+    {
+      if ( normalized[i] )
+      {
+        error = -2; /* -2 means is_variable. */
+        break;
+      }
+    }
+
   Exit:
     FT_FREE( normalized );
     return error;
@@ -3311,10 +3448,12 @@
                      FT_UInt    num_coords,
                      FT_Fixed*  coords )
   {
-    TT_Face   ttface = (TT_Face)face;
-    FT_Error  error  = FT_Err_Ok;
-    GX_Blend  blend;
-    FT_UInt   i, nc;
+    TT_Face       ttface = (TT_Face)face;
+    FT_Error      error  = FT_Err_Ok;
+    GX_Blend      blend;
+    FT_MM_Var*    mmvar;
+    FT_Var_Axis*  a;
+    FT_UInt       i, nc;
 
 
     if ( !ttface->blend )
@@ -3342,19 +3481,21 @@
       nc = blend->num_axis;
     }
 
+    mmvar = blend->mmvar;
+    a     = mmvar->axis;
     if ( ttface->doblend )
     {
-      for ( i = 0; i < nc; i++ )
+      for ( i = 0; i < nc; i++, a++ )
         coords[i] = blend->coords[i];
     }
     else
     {
-      for ( i = 0; i < nc; i++ )
-        coords[i] = 0;
+      for ( i = 0; i < nc; i++, a++ )
+        coords[i] = a->def;
     }
 
-    for ( ; i < num_coords; i++ )
-      coords[i] = 0;
+    for ( ; i < num_coords; i++, a++ )
+      coords[i] = a->def;
 
     return FT_Err_Ok;
   }
@@ -3446,6 +3587,9 @@
         goto Exit;
       error = TT_Set_Var_Design( face, 0, NULL );
     }
+
+    if ( error == -1 || error == -2 )
+      error = FT_Err_Ok;
 
   Exit:
     return error;
@@ -4255,6 +4399,8 @@
       points_org[j].y = FT_intToFixed( outline->points[j].y );
     }
 
+    p = stream->cursor;
+
     tupleCount &= GX_TC_TUPLE_COUNT_MASK;
     for ( i = 0; i < tupleCount; i++ )
     {
@@ -4269,20 +4415,29 @@
       tupleScalars = blend->tuplescalars;
 
       /* Enter frame for four bytes. */
-      if ( stream->limit - stream->cursor < 4 )
+      if ( 4 > stream->limit - p )
       {
         FT_TRACE2(( "TT_Vary_Apply_Glyph_Deltas:"
                     " invalid glyph variation array header\n" ));
         error = FT_THROW( Invalid_Table );
         goto Exit;
       }
-      tupleDataSize = FT_GET_USHORT();
-      tupleIndex    = FT_GET_USHORT();
+
+      tupleDataSize = FT_NEXT_USHORT( p );
+      tupleIndex    = FT_NEXT_USHORT( p );
 
       if ( tupleIndex & GX_TI_EMBEDDED_TUPLE_COORD )
       {
+        if ( 2 * blend->num_axis > (FT_UInt)( stream->limit - p ) )
+        {
+          FT_TRACE2(( "TT_Vary_Apply_Glyph_Deltas:"
+                      " invalid glyph variation array header\n" ));
+          error = FT_THROW( Invalid_Table );
+          goto Exit;
+        }
+
         for ( j = 0; j < blend->num_axis; j++ )
-          peak_coords[j] = FT_fdot14ToFixed( FT_GET_SHORT() );
+          peak_coords[j] = FT_fdot14ToFixed( FT_NEXT_SHORT( p ) );
 
         tuple_coords = peak_coords;
         tupleScalars = NULL;
@@ -4299,7 +4454,8 @@
         }
 
         tuple_coords = blend->tuplecoords +
-            ( tupleIndex & GX_TI_TUPLE_INDEX_MASK ) * blend->num_axis;
+                         ( tupleIndex & GX_TI_TUPLE_INDEX_MASK ) *
+                         blend->num_axis;
       }
       else
       {
@@ -4312,10 +4468,18 @@
 
       if ( tupleIndex & GX_TI_INTERMEDIATE_TUPLE )
       {
+        if ( 4 * blend->num_axis > (FT_UInt)( stream->limit - p ) )
+        {
+          FT_TRACE2(( "TT_Vary_Apply_Glyph_Deltas:"
+                      " invalid glyph variation array header\n" ));
+          error = FT_THROW( Invalid_Table );
+          goto Exit;
+        }
+
         for ( j = 0; j < blend->num_axis; j++ )
-          im_start_coords[j] = FT_fdot14ToFixed( FT_GET_SHORT() );
+          im_start_coords[j] = FT_fdot14ToFixed( FT_NEXT_SHORT( p ) );
         for ( j = 0; j < blend->num_axis; j++ )
-          im_end_coords[j] = FT_fdot14ToFixed( FT_GET_SHORT() );
+          im_end_coords[j] = FT_fdot14ToFixed( FT_NEXT_SHORT( p ) );
 
         tupleScalars = NULL;
       }
