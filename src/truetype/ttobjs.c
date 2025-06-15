@@ -80,9 +80,9 @@
       FT_FREE( zone->org );
       FT_FREE( zone->orus );
 
-      zone->max_points   = zone->n_points   = 0;
-      zone->max_contours = zone->n_contours = 0;
-      zone->memory       = NULL;
+      zone->n_points   = 0;
+      zone->n_contours = 0;
+      zone->memory     = NULL;
     }
   }
 
@@ -134,8 +134,8 @@
     }
     else
     {
-      zone->max_points   = maxPoints;
-      zone->max_contours = maxContours;
+      zone->n_points   = maxPoints;
+      zone->n_contours = maxContours;
     }
 
     return error;
@@ -488,8 +488,7 @@
     int        j, k;
 
 
-    FT_MEM_SET( num_matched_ids, 0,
-                sizeof ( int ) * TRICK_SFNT_IDS_NUM_FACES );
+    FT_ARRAY_ZERO( num_matched_ids, TRICK_SFNT_IDS_NUM_FACES );
     has_cvt  = FALSE;
     has_fpgm = FALSE;
     has_prep = FALSE;
@@ -908,40 +907,23 @@
 
     exec->pedantic_hinting = pedantic;
 
-    exec->period    = 64;
-    exec->phase     = 0;
-    exec->threshold = 0;
-
-    {
-      FT_Size_Metrics*  size_metrics = &exec->metrics;
-      TT_Size_Metrics*  tt_metrics   = &exec->tt_metrics;
-
-
-      size_metrics->x_ppem   = 0;
-      size_metrics->y_ppem   = 0;
-      size_metrics->x_scale  = 0;
-      size_metrics->y_scale  = 0;
-
-      tt_metrics->ppem  = 0;
-      tt_metrics->scale = 0;
-    }
-
-    /* allow font program execution */
-    TT_Set_CodeRange( exec,
-                      tt_coderange_font,
-                      face->font_program,
-                      (FT_Long)face->font_program_size );
-
     /* disable CVT and glyph programs coderange */
     TT_Clear_CodeRange( exec, tt_coderange_cvt );
     TT_Clear_CodeRange( exec, tt_coderange_glyph );
 
     if ( face->font_program_size > 0 )
     {
-      TT_Goto_CodeRange( exec, tt_coderange_font, 0 );
+      /* allow font program execution */
+      TT_Set_CodeRange( exec,
+                        tt_coderange_font,
+                        face->font_program,
+                        (FT_Long)face->font_program_size );
+
+      exec->pts.n_points   = 0;
+      exec->pts.n_contours = 0;
 
       FT_TRACE4(( "Executing `fpgm' table.\n" ));
-      error = face->interpreter( exec );
+      error = TT_Run_Context( exec, size );
       FT_TRACE4(( error ? "  failed (error code 0x%x)\n" : "",
                   error ));
     }
@@ -1007,19 +989,21 @@
 
     exec->pedantic_hinting = pedantic;
 
-    TT_Set_CodeRange( exec,
-                      tt_coderange_cvt,
-                      face->cvt_program,
-                      (FT_Long)face->cvt_program_size );
-
     TT_Clear_CodeRange( exec, tt_coderange_glyph );
 
     if ( face->cvt_program_size > 0 )
     {
-      TT_Goto_CodeRange( exec, tt_coderange_cvt, 0 );
+      /* allow CV program execution */
+      TT_Set_CodeRange( exec,
+                        tt_coderange_cvt,
+                        face->cvt_program,
+                        (FT_Long)face->cvt_program_size );
+
+      exec->pts.n_points   = 0;
+      exec->pts.n_contours = 0;
 
       FT_TRACE4(( "Executing `prep' table.\n" ));
-      error = face->interpreter( exec );
+      error = TT_Run_Context( exec, size );
       FT_TRACE4(( error ? "  failed (error code 0x%x)\n" : "",
                   error ));
     }
@@ -1028,30 +1012,8 @@
 
     size->cvt_ready = error;
 
-    /* UNDOCUMENTED!  The MS rasterizer doesn't allow the following */
-    /* graphics state variables to be modified by the CVT program.  */
-
-    exec->GS.dualVector.x = 0x4000;
-    exec->GS.dualVector.y = 0;
-    exec->GS.projVector.x = 0x4000;
-    exec->GS.projVector.y = 0x0;
-    exec->GS.freeVector.x = 0x4000;
-    exec->GS.freeVector.y = 0x0;
-
-    exec->GS.rp0 = 0;
-    exec->GS.rp1 = 0;
-    exec->GS.rp2 = 0;
-
-    exec->GS.gep0 = 1;
-    exec->GS.gep1 = 1;
-    exec->GS.gep2 = 1;
-
-    exec->GS.loop = 1;
-
-    /* save as default graphics state */
-    size->GS = exec->GS;
-
-    TT_Save_Context( exec, size );
+    if ( !error )
+      TT_Save_Context( exec, size );
 
     return error;
   }
@@ -1176,20 +1138,7 @@
     if ( error )
       goto Exit;
 
-    size->twilight.n_points = n_twilight;
-
     size->GS = tt_default_graphics_state;
-
-    /* set `face->interpreter' according to the debug hook present */
-    {
-      FT_Library  library = face->root.driver->root.library;
-
-
-      face->interpreter = (TT_Interpreter)
-                            library->debug_hooks[FT_DEBUG_HOOK_TRUETYPE];
-      if ( !face->interpreter )
-        face->interpreter = (TT_Interpreter)TT_RunIns;
-    }
 
     /* Fine, now run the font program! */
 
@@ -1228,21 +1177,12 @@
     /* rescale CVT when needed */
     if ( size->cvt_ready < 0 )
     {
-      FT_UShort  i;
-
-
       /* all twilight points are originally zero */
-      for ( i = 0; i < size->twilight.n_points; i++ )
-      {
-        size->twilight.org[i].x = 0;
-        size->twilight.org[i].y = 0;
-        size->twilight.cur[i].x = 0;
-        size->twilight.cur[i].y = 0;
-      }
+      FT_ARRAY_ZERO( size->twilight.org, size->twilight.n_points );
+      FT_ARRAY_ZERO( size->twilight.cur, size->twilight.n_points );
 
       /* clear storage area */
-      for ( i = 0; i < size->storage_size; i++ )
-        size->storage[i] = 0;
+      FT_ARRAY_ZERO( size->storage, size->storage_size );
 
       size->GS = tt_default_graphics_state;
 

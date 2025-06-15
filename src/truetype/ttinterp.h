@@ -111,6 +111,7 @@ FT_BEGIN_HEADER
     TT_Face            face;       /* ! */
     TT_Size            size;       /* ! */
     FT_Memory          memory;
+    TT_Interpreter     interpreter;
 
     /* instructions state */
 
@@ -360,14 +361,9 @@ FT_BEGIN_HEADER
 
 #ifdef TT_USE_BYTECODE_INTERPRETER
   FT_LOCAL( void )
-  TT_Goto_CodeRange( TT_ExecContext  exec,
-                     FT_Int          range,
-                     FT_Long         IP );
-
-  FT_LOCAL( void )
   TT_Set_CodeRange( TT_ExecContext  exec,
                     FT_Int          range,
-                    void*           base,
+                    FT_Byte*        base,
                     FT_Long         length );
 
   FT_LOCAL( void )
@@ -411,10 +407,11 @@ FT_BEGIN_HEADER
 
   FT_LOCAL( void )
   TT_Save_Context( TT_ExecContext  exec,
-                   TT_Size         ins );
+                   TT_Size         size );
 
   FT_LOCAL( FT_Error )
-  TT_Run_Context( TT_ExecContext  exec );
+  TT_Run_Context( TT_ExecContext  exec,
+                  TT_Size         size );
 #endif /* TT_USE_BYTECODE_INTERPRETER */
 
 
