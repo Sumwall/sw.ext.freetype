@@ -67,23 +67,13 @@
    *     A pointer to the target glyph zone.
    */
   FT_LOCAL_DEF( void )
-  tt_glyphzone_done( TT_GlyphZone  zone )
+  tt_glyphzone_done( FT_Memory     memory,
+                     TT_GlyphZone  zone )
   {
-    FT_Memory  memory = zone->memory;
+    FT_FREE( zone->org );
 
-
-    if ( memory )
-    {
-      FT_FREE( zone->contours );
-      FT_FREE( zone->tags );
-      FT_FREE( zone->cur );
-      FT_FREE( zone->org );
-      FT_FREE( zone->orus );
-
-      zone->n_points   = 0;
-      zone->n_contours = 0;
-      zone->memory     = NULL;
-    }
+    zone->n_points   = 0;
+    zone->n_contours = 0;
   }
 
 
@@ -119,23 +109,22 @@
                     TT_GlyphZone  zone )
   {
     FT_Error  error;
+    FT_Long   size = 3 * maxPoints * sizeof ( FT_Vector ) +
+                       maxContours * sizeof ( FT_UShort ) +
+                         maxPoints * sizeof ( FT_Byte );
 
 
-    FT_ZERO( zone );
-    zone->memory = memory;
-
-    if ( FT_NEW_ARRAY( zone->org,      maxPoints   ) ||
-         FT_NEW_ARRAY( zone->cur,      maxPoints   ) ||
-         FT_NEW_ARRAY( zone->orus,     maxPoints   ) ||
-         FT_NEW_ARRAY( zone->tags,     maxPoints   ) ||
-         FT_NEW_ARRAY( zone->contours, maxContours ) )
-    {
-      tt_glyphzone_done( zone );
-    }
-    else
+    if ( !FT_ALLOC( zone->org, size ) )
     {
       zone->n_points   = maxPoints;
       zone->n_contours = maxContours;
+
+      zone->cur      =               zone->org      + maxPoints;
+      zone->orus     =               zone->cur      + maxPoints;
+      zone->contours = (FT_UShort*)( zone->orus     + maxPoints );
+      zone->tags     =   (FT_Byte*)( zone->contours + maxContours );
+
+      zone->first_point = 0;
     }
 
     return error;
@@ -884,15 +873,11 @@
    *   size ::
    *     A handle to the size object.
    *
-   *   pedantic ::
-   *     Set if bytecode execution should be pedantic.
-   *
    * @Return:
    *   FreeType error code.  0 means success.
    */
   FT_LOCAL_DEF( FT_Error )
-  tt_size_run_fpgm( TT_Size  size,
-                    FT_Bool  pedantic )
+  tt_size_run_fpgm( TT_Size  size )
   {
     TT_Face         face = (TT_Face)size->root.face;
     TT_ExecContext  exec;
@@ -904,8 +889,6 @@
     error = TT_Load_Context( exec, face, size );
     if ( error )
       return error;
-
-    exec->pedantic_hinting = pedantic;
 
     /* disable CVT and glyph programs coderange */
     TT_Clear_CodeRange( exec, tt_coderange_cvt );
@@ -951,21 +934,28 @@
    *   size ::
    *     A handle to the size object.
    *
-   *   pedantic ::
-   *     Set if bytecode execution should be pedantic.
-   *
    * @Return:
    *   FreeType error code.  0 means success.
    */
   FT_LOCAL_DEF( FT_Error )
-  tt_size_run_prep( TT_Size  size,
-                    FT_Bool  pedantic )
+  tt_size_run_prep( TT_Size  size )
   {
     TT_Face         face = (TT_Face)size->root.face;
     TT_ExecContext  exec;
     FT_Error        error;
     FT_UInt         i;
 
+
+    /* set default GS, twilight points, and storage */
+    /* before CV program can modify them.           */
+    size->GS = tt_default_graphics_state;
+
+    /* all twilight points are originally zero */
+    FT_ARRAY_ZERO( size->twilight.org, size->twilight.n_points );
+    FT_ARRAY_ZERO( size->twilight.cur, size->twilight.n_points );
+
+    /* clear storage area */
+    FT_ARRAY_ZERO( size->storage, size->storage_size );
 
     /* Scale the cvt values to the new ppem.            */
     /* By default, we use the y ppem value for scaling. */
@@ -986,8 +976,6 @@
     error = TT_Load_Context( exec, face, size );
     if ( error )
       return error;
-
-    exec->pedantic_hinting = pedantic;
 
     TT_Clear_CodeRange( exec, tt_coderange_glyph );
 
@@ -1020,11 +1008,10 @@
 
 
   static void
-  tt_size_done_bytecode( FT_Size  ftsize )
+  tt_size_done_bytecode( TT_Size  size )
   {
-    TT_Size    size   = (TT_Size)ftsize;
-    TT_Face    face   = (TT_Face)ftsize->face;
-    FT_Memory  memory = face->root.memory;
+    FT_Memory  memory = size->root.face->memory;
+
 
     if ( size->context )
     {
@@ -1040,7 +1027,7 @@
     size->storage_size = 0;
 
     /* twilight zone */
-    tt_glyphzone_done( &size->twilight );
+    tt_glyphzone_done( memory, &size->twilight );
 
     FT_FREE( size->function_defs );
     FT_FREE( size->instruction_defs );
@@ -1052,25 +1039,22 @@
 
     size->max_func = 0;
     size->max_ins  = 0;
-
-    size->bytecode_ready = -1;
-    size->cvt_ready      = -1;
   }
 
 
   /* Initialize bytecode-related fields in the size object.       */
   /* We do this only if bytecode interpretation is really needed. */
-  static FT_Error
-  tt_size_init_bytecode( FT_Size  ftsize,
+  FT_LOCAL_DEF( FT_Error )
+  tt_size_init_bytecode( TT_Size  size,
                          FT_Bool  pedantic )
   {
     FT_Error   error;
-    TT_Size    size = (TT_Size)ftsize;
-    TT_Face    face = (TT_Face)ftsize->face;
-    FT_Memory  memory = face->root.memory;
+    TT_Face    face = (TT_Face)size->root.face;
+    FT_Memory  memory = size->root.face->memory;
 
     FT_UShort       n_twilight;
     TT_MaxProfile*  maxp = &face->max_profile;
+    TT_ExecContext  exec = size->context;
 
 
     /* clean up bytecode related data */
@@ -1078,15 +1062,17 @@
     FT_FREE( size->instruction_defs );
     FT_FREE( size->cvt );
     FT_FREE( size->storage );
+    tt_glyphzone_done( memory, &size->twilight );
 
-    if ( size->context )
-      TT_Done_Context( size->context );
-    tt_glyphzone_done( &size->twilight );
+    if ( exec )
+      TT_Done_Context( exec );
 
-    size->bytecode_ready = -1;
-    size->cvt_ready      = -1;
+    exec = TT_New_Context( (TT_Driver)face->root.driver );
+    if ( !exec )
+      return FT_THROW( Could_Not_Find_Context );
 
-    size->context = TT_New_Context( (TT_Driver)face->root.driver );
+    exec->pedantic_hinting = pedantic;
+    size->context          = exec;
 
     size->max_function_defs    = maxp->maxFunctionDefs;
     size->max_instruction_defs = maxp->maxInstructionDefs;
@@ -1097,6 +1083,7 @@
     size->max_func = 0;
     size->max_ins  = 0;
 
+    size->cvt_ready    = -1;
     size->cvt_size     = face->cvt_size;
     size->storage_size = maxp->maxStorage;
 
@@ -1128,7 +1115,8 @@
          FT_NEW_ARRAY( size->storage,          size->storage_size         ) )
       goto Exit;
 
-    /* reserve twilight zone */
+    /* reserve twilight zone and set GS before fpgm is executed, */
+    /* just in case, even though fpgm should not touch them      */
     n_twilight = maxp->maxTwilightPoints;
 
     /* there are 4 phantom points (do we need this?) */
@@ -1148,50 +1136,13 @@
     /* to be executed just once; calling it again is completely useless   */
     /* and might even lead to extremely slow behaviour if it is malformed */
     /* (containing an infinite loop, for example).                        */
-    error = tt_size_run_fpgm( size, pedantic );
+    error = tt_size_run_fpgm( size );
     return error;
 
   Exit:
     if ( error )
-      tt_size_done_bytecode( ftsize );
+      tt_size_done_bytecode( size );
 
-    return error;
-  }
-
-
-  FT_LOCAL_DEF( FT_Error )
-  tt_size_ready_bytecode( TT_Size  size,
-                          FT_Bool  pedantic )
-  {
-    FT_Error  error = FT_Err_Ok;
-
-
-    if ( size->bytecode_ready < 0 )
-      error = tt_size_init_bytecode( (FT_Size)size, pedantic );
-    else
-      error = size->bytecode_ready;
-
-    if ( error )
-      goto Exit;
-
-    /* rescale CVT when needed */
-    if ( size->cvt_ready < 0 )
-    {
-      /* all twilight points are originally zero */
-      FT_ARRAY_ZERO( size->twilight.org, size->twilight.n_points );
-      FT_ARRAY_ZERO( size->twilight.cur, size->twilight.n_points );
-
-      /* clear storage area */
-      FT_ARRAY_ZERO( size->storage, size->storage_size );
-
-      size->GS = tt_default_graphics_state;
-
-      error = tt_size_run_prep( size, pedantic );
-    }
-    else
-      error = size->cvt_ready;
-
-  Exit:
     return error;
   }
 
@@ -1222,7 +1173,6 @@
 
 #ifdef TT_USE_BYTECODE_INTERPRETER
     size->bytecode_ready = -1;
-    size->cvt_ready      = -1;
 #endif
 
     size->ttmetrics.valid = FALSE;
@@ -1251,7 +1201,7 @@
 
 
 #ifdef TT_USE_BYTECODE_INTERPRETER
-    tt_size_done_bytecode( ttsize );
+    tt_size_done_bytecode( size );
 #endif
 
     size->ttmetrics.valid = FALSE;

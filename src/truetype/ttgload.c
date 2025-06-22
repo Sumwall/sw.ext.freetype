@@ -2098,7 +2098,6 @@
   {
     TT_Face             face   = (TT_Face)glyph->face;
     SFNT_Service        sfnt   = (SFNT_Service)face->sfnt;
-    FT_Stream           stream = face->root.stream;
     FT_Error            error;
     TT_SBit_MetricsRec  sbit_metrics;
 
@@ -2107,7 +2106,7 @@
                                    size->strike_index,
                                    glyph_index,
                                    (FT_UInt)load_flags,
-                                   stream,
+                                   face->root.stream,
                                    &glyph->bitmap,
                                    &sbit_metrics );
     if ( !error )
@@ -2195,7 +2194,6 @@
                   FT_Bool       glyf_table_only )
   {
     TT_Face    face   = (TT_Face)glyph->face;
-    FT_Stream  stream = face->root.stream;
 
 
     FT_ZERO( loader );
@@ -2207,7 +2205,6 @@
     {
       FT_Error        error;
       TT_ExecContext  exec;
-      FT_Bool         pedantic  = FT_BOOL( load_flags & FT_LOAD_PEDANTIC );
       FT_Bool         grayscale = TRUE;
 #ifdef TT_SUPPORT_SUBPIXEL_HINTING_MINIMAL
       FT_Bool         subpixel_hinting_lean;
@@ -2218,23 +2215,19 @@
       FT_Bool  reexecute = FALSE;
 
 
-      if ( size->bytecode_ready < 0 || size->cvt_ready < 0 )
+      if ( size->bytecode_ready > 0 )
+        return size->bytecode_ready;
+      if ( size->bytecode_ready < 0 )
       {
-        error = tt_size_ready_bytecode( size, pedantic );
+        FT_Bool  pedantic = FT_BOOL( load_flags & FT_LOAD_PEDANTIC );
+
+
+        error = tt_size_init_bytecode( size, pedantic );
         if ( error )
           return error;
       }
-      else if ( size->bytecode_ready )
-        return size->bytecode_ready;
-      else if ( size->cvt_ready )
-        return size->cvt_ready;
 
-      /* query new execution context */
       exec = size->context;
-      if ( !exec )
-        return FT_THROW( Could_Not_Find_Context );
-
-      exec->pedantic_hinting = pedantic;
 
       grayscale = FT_BOOL( FT_LOAD_TARGET_MODE( load_flags ) !=
                              FT_RENDER_MODE_MONO             );
@@ -2297,9 +2290,11 @@
         reexecute       = TRUE;
       }
 
-      if ( reexecute )
+      if ( size->cvt_ready > 0 )
+        return size->cvt_ready;
+      if ( size->cvt_ready < 0 || reexecute )
       {
-        error = tt_size_run_prep( size, pedantic );
+        error = tt_size_run_prep( size );
         if ( error )
           return error;
       }
@@ -2344,12 +2339,12 @@
       /* is set or backward compatibility mode of the v38 or v40  */
       /* interpreters is active.  See `ttinterp.h' for details on */
       /* backward compatibility mode.                             */
-      if ( IS_HINTED( loader->load_flags )                   &&
-           !( loader->load_flags & FT_LOAD_COMPUTE_METRICS ) &&
+      if ( IS_HINTED( load_flags )                   &&
+           !( load_flags & FT_LOAD_COMPUTE_METRICS ) &&
 #ifdef TT_SUPPORT_SUBPIXEL_HINTING_MINIMAL
-           !exec->backward_compatibility                     &&
+           !exec->backward_compatibility             &&
 #endif
-           !face->postscript.isFixedPitch                    )
+           !face->postscript.isFixedPitch            )
       {
         loader->widthp = size->widthp;
       }
@@ -2374,7 +2369,7 @@
     loader->face   = face;
     loader->size   = size;
     loader->glyph  = (FT_GlyphSlot)glyph;
-    loader->stream = stream;
+    loader->stream = face->root.stream;
 
     loader->composites.head = NULL;
     loader->composites.tail = NULL;

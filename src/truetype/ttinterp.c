@@ -201,9 +201,6 @@
    *   exec ::
    *     A handle to the target execution context.
    *
-   *   memory ::
-   *     A handle to the parent memory object.
-   *
    * @Note:
    *   Only the glyph loader and debugger should call this function.
    */
@@ -318,6 +315,8 @@
     exec->pointSize  = size->point_size;
     exec->tt_metrics = size->ttmetrics;
     exec->metrics    = *size->metrics;
+
+    exec->twilight   = size->twilight;
 
     return FT_Err_Ok;
   }
@@ -7458,8 +7457,6 @@
     exec->zp0 = exec->pts;
     exec->zp1 = exec->pts;
     exec->zp2 = exec->pts;
-
-    exec->twilight = size->twilight;
 
     /* We restrict the number of twilight points to a reasonable,     */
     /* heuristic value to avoid slow execution of malformed bytecode. */
