@@ -214,10 +214,6 @@
     exec->maxPoints   = 0;
     exec->maxContours = 0;
 
-    /* free stack */
-    FT_FREE( exec->stack );
-    exec->stackSize = 0;
-
     /* free glyf cvt working area */
     FT_FREE( exec->glyfCvt );
     exec->glyfCvtSize = 0;
@@ -274,43 +270,20 @@
                    TT_Face         face,
                    TT_Size         size )
   {
-    FT_Int     i;
-    FT_Long    stackSize;
-    FT_Error   error;
     FT_Memory  memory = exec->memory;
 
 
     exec->face = face;
     exec->size = size;
 
-    exec->cvtSize = size->cvt_size;
-    exec->cvt     = size->cvt;
-
-    exec->storeSize = size->storage_size;
-    exec->storage   = size->storage;
-
-    /* XXX: We reserve a little more elements on the stack to deal safely */
-    /*      with broken fonts like arialbs, courbs, timesbs, etc.         */
-    stackSize = face->max_profile.maxStackElements + 32;
-    if ( FT_QRENEW_ARRAY( exec->stack, exec->stackSize, stackSize ) )
-      return error;
-    exec->stackSize = stackSize;
+    /* CVT and storage are not persistent in FreeType */
+    /* reset them after they might have been modifief */
+    exec->storage = exec->stack   + exec->stackSize;
+    exec->cvt     = exec->storage + exec->storeSize;
 
     /* free previous glyph code range */
     FT_FREE( exec->glyphIns );
     exec->glyphSize = 0;
-
-    for ( i = 0; i < TT_MAX_CODE_RANGES; i++ )
-      exec->codeRangeTable[i] = size->codeRangeTable[i];
-
-    exec->numFDefs   = size->num_function_defs;
-    exec->maxFDefs   = size->max_function_defs;
-    exec->numIDefs   = size->num_instruction_defs;
-    exec->maxIDefs   = size->max_instruction_defs;
-    exec->FDefs      = size->function_defs;
-    exec->IDefs      = size->instruction_defs;
-    exec->maxFunc    = size->max_func;
-    exec->maxIns     = size->max_ins;
 
     exec->pointSize  = size->point_size;
     exec->tt_metrics = size->ttmetrics;
@@ -345,9 +318,6 @@
   TT_Save_Context( TT_ExecContext  exec,
                    TT_Size         size )
   {
-    FT_Int  i;
-
-
     /* UNDOCUMENTED!                                            */
     /* Only these GS values can be modified by the CVT program. */
 
@@ -361,15 +331,6 @@
     size->GS.instruct_control    = exec->GS.instruct_control;
     size->GS.scan_control        = exec->GS.scan_control;
     size->GS.scan_type           = exec->GS.scan_type;
-
-    size->num_function_defs    = exec->numFDefs;
-    size->num_instruction_defs = exec->numIDefs;
-
-    size->max_func = exec->maxFunc;
-    size->max_ins  = exec->maxIns;
-
-    for ( i = 0; i < TT_MAX_CODE_RANGES; i++ )
-      size->codeRangeTable[i] = exec->codeRangeTable[i];
   }
 
 
@@ -6550,7 +6511,7 @@
     /* Otherwise, instructions may behave weirdly and rendering results */
     /* may differ between v35 and v40 mode, e.g., in `Times New Roman   */
     /* Bold Italic'. */
-    if ( SUBPIXEL_HINTING_MINIMAL && exc->subpixel_hinting_lean )
+    if ( SUBPIXEL_HINTING_MINIMAL && exc->mode != FT_RENDER_MODE_MONO )
     {
       /*********************************
        * HINTING FOR SUBPIXEL
@@ -6567,7 +6528,7 @@
        * Selector Bit:  8
        * Return Bit(s): 15
        */
-      if ( ( args[0] & 256 ) != 0 && exc->vertical_lcd_lean )
+      if ( ( args[0] & 256 ) != 0 && exc->mode == FT_RENDER_MODE_LCD_V )
         K |= 1 << 15;
 
       /*********************************
@@ -6588,7 +6549,7 @@
        * The only smoothing method FreeType supports unless someone sets
        * FT_LOAD_TARGET_MONO.
        */
-      if ( ( args[0] & 2048 ) != 0 && exc->subpixel_hinting_lean )
+      if ( ( args[0] & 2048 ) != 0 && exc->mode != FT_RENDER_MODE_MONO )
         K |= 1 << 18;
 
       /*********************************
@@ -6600,7 +6561,10 @@
        * Grayscale rendering is what FreeType does anyway unless someone
        * sets FT_LOAD_TARGET_MONO or FT_LOAD_TARGET_LCD(_V)
        */
-      if ( ( args[0] & 4096 ) != 0 && exc->grayscale_cleartype )
+      if ( ( args[0] & 4096 ) != 0           &&
+           exc->mode != FT_RENDER_MODE_MONO  &&
+           exc->mode != FT_RENDER_MODE_LCD   &&
+           exc->mode != FT_RENDER_MODE_LCD_V )
         K |= 1 << 19;
     }
 #endif
@@ -7460,6 +7424,9 @@
 
     /* We restrict the number of twilight points to a reasonable,     */
     /* heuristic value to avoid slow execution of malformed bytecode. */
+    /* The selected value is large enough to support fonts hinted     */
+    /* with `ttfautohint`, which uses twilight points to store        */
+    /* vertical coordinates of (auto-hinter) segments.                */
     num_twilight_points = FT_MAX( 30,
                                   2 * ( exec->pts.n_points + exec->cvtSize ) );
     if ( exec->twilight.n_points > num_twilight_points )
