@@ -968,7 +968,7 @@
       /* Note that this scaling operation is very sensitive to rounding;   */
       /* the integer division by 64 must be applied to the first argument. */
       exec->cvt[i] = FT_MulFix( face->cvt[i] / 64, size->ttmetrics.scale );
-      FT_TRACE6(( "  %3d: %f (%f)\n",
+      FT_TRACE6(( "  %3u: %f (%f)\n",
                   i, (double)face->cvt[i] / 64, (double)exec->cvt[i] / 64 ));
     }
     FT_TRACE6(( "\n" ));
@@ -1066,7 +1066,8 @@
     exec->cvtSize   = face->cvt_size;
 
     if ( FT_NEW_ARRAY( exec->stack,
-                       exec->stackSize + exec->storeSize  + exec->cvtSize ) )
+                       exec->stackSize +
+                         (FT_Long)( exec->storeSize + exec->cvtSize ) ) )
       goto Exit;
 
     /* reserve twilight zone and set GS before fpgm is executed, */
