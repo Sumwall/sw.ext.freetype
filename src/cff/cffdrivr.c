@@ -121,7 +121,20 @@
     kerning->y = 0;
 
     if ( sfnt )
-      kerning->x = sfnt->get_kerning( cffface, left_glyph, right_glyph );
+    {
+      /* Use 'kern' table if available since that can be faster; otherwise */
+      /* use GPOS kerning pairs if available.                              */
+      if ( cffface->kern_avail_bits )
+        kerning->x = sfnt->get_kerning( cffface,
+                                        left_glyph,
+                                        right_glyph );
+#ifdef TT_CONFIG_OPTION_GPOS_KERNING
+      else if ( cffface->num_gpos_lookups_kerning )
+        kerning->x = sfnt->get_gpos_kerning( cffface,
+                                             left_glyph,
+                                             right_glyph );
+#endif
+    }
 
     return FT_Err_Ok;
   }
