@@ -1088,18 +1088,6 @@
     size->ttmetrics.rotated   = FALSE;
     size->ttmetrics.stretched = FALSE;
 
-    /* Set default engine compensation.  Value 3 is not described */
-    /* in the OpenType specification (as of May 2019), but Greg   */
-    /* says that MS handles it the same as `gray'.                */
-    /*                                                            */
-    /* The Apple specification says that the compensation for     */
-    /* `gray' is always zero.  FreeType doesn't do any            */
-    /* compensation at all.                                       */
-    size->ttmetrics.compensations[0] = 0;   /* gray  */
-    size->ttmetrics.compensations[1] = 0;   /* black */
-    size->ttmetrics.compensations[2] = 0;   /* white */
-    size->ttmetrics.compensations[3] = 0;   /* zero  */
-
     /* Fine, now run the font program! */
 
     /* In case of an error while executing `fpgm', we intentionally don't */
@@ -1147,8 +1135,7 @@
     size->bytecode_ready = -1;
 #endif
 
-    size->ttmetrics.valid = FALSE;
-    size->strike_index    = 0xFFFFFFFFUL;
+    size->strike_index = 0xFFFFFFFFUL;
 
     return error;
   }
@@ -1175,8 +1162,6 @@
 #ifdef TT_USE_BYTECODE_INTERPRETER
     tt_size_done_bytecode( size );
 #endif
-
-    size->ttmetrics.valid = FALSE;
   }
 
 
@@ -1197,20 +1182,12 @@
    *     function must take `FT_Size` as a result. The passed `FT_Size` is
    *     expected to point to a `TT_Size`.
    */
-  FT_LOCAL_DEF( FT_Error )
+  FT_LOCAL_DEF( void )
   tt_size_reset_height( FT_Size  ft_size )
   {
     TT_Size           size         = (TT_Size)ft_size;
-    TT_Face           face         = (TT_Face)size->root.face;
+    TT_Face           face         = (TT_Face)ft_size->face;
     FT_Size_Metrics*  size_metrics = &size->hinted_metrics;
-
-    size->ttmetrics.valid = FALSE;
-
-    /* copy the result from base layer */
-    *size_metrics = size->root.metrics;
-
-    if ( size_metrics->x_ppem < 1 || size_metrics->y_ppem < 1 )
-      return FT_THROW( Invalid_PPem );
 
     /* This bit flag, if set, indicates that the ppems must be       */
     /* rounded to integers.  Nearly all TrueType fonts have this bit */
@@ -1229,10 +1206,6 @@
                                FT_MulFix( face->root.height,
                                           size_metrics->y_scale ) );
     }
-
-    size->ttmetrics.valid = TRUE;
-
-    return FT_Err_Ok;
   }
 
 
@@ -1252,14 +1225,20 @@
   FT_LOCAL_DEF( FT_Error )
   tt_size_reset( TT_Size  size )
   {
-    FT_Error          error;
     TT_Face           face         = (TT_Face)size->root.face;
     FT_Size_Metrics*  size_metrics = &size->hinted_metrics;
 
 
-    error = tt_size_reset_height( (FT_Size)size );
-    if ( error )
-      return error;
+    /* invalidate the size object first */
+    size->ttmetrics.ppem = 0;
+
+    if ( size->root.metrics.x_ppem == 0 || size->root.metrics.y_ppem == 0 )
+      return FT_THROW( Invalid_PPem );
+
+    /* copy the result from base layer */
+    *size_metrics = size->root.metrics;
+
+    tt_size_reset_height( (FT_Size)size );
 
     if ( face->header.Flags & 8 )
     {

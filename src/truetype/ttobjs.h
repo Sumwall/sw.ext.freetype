@@ -79,6 +79,7 @@ FT_BEGIN_HEADER
 
     FT_Long        loop;
     FT_Int         round_state;
+    FT_F26Dot6     compensation[4];   /* device-specific compensations  */
 
     /* default values below can be modified by 'fpgm' and 'prep' */
     FT_F26Dot6     minimum_distance;
@@ -186,13 +187,9 @@ FT_BEGIN_HEADER
     FT_Long     x_ratio;
     FT_Long     y_ratio;
 
-    FT_UShort   ppem;               /* maximum ppem size              */
     FT_Long     ratio;              /* current ratio                  */
     FT_Fixed    scale;
-
-    FT_F26Dot6  compensations[4];   /* device-specific compensations  */
-
-    FT_Bool     valid;
+    FT_UShort   ppem;               /* maximum ppem size              */
 
     FT_Bool     rotated;            /* `is the glyph rotated?'-flag   */
     FT_Bool     stretched;          /* `is the glyph stretched?'-flag */
@@ -302,7 +299,7 @@ FT_BEGIN_HEADER
 
 #endif /* TT_USE_BYTECODE_INTERPRETER */
 
-  FT_LOCAL( FT_Error )
+  FT_LOCAL( void )
   tt_size_reset_height( FT_Size  size );
 
   FT_LOCAL( FT_Error )
