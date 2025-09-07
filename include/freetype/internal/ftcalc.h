@@ -4,7 +4,7 @@
  *
  *   Arithmetic computations (specification).
  *
- * Copyright (C) 1996-2024 by
+ * Copyright (C) 1996-2025 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -99,12 +99,6 @@ FT_BEGIN_HEADER
     return (FT_Long)( ab >> 16 );
   }
 
-
-#ifdef __VMS
-#  ifdef FT_MulFix
-#    undef FT_MulFix
-#  endif
-#endif
 
 #define FT_MulFix( a, b )  FT_MulFix_64( a, b )
 
