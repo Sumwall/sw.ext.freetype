@@ -524,12 +524,22 @@
     bitmap->rows       = (unsigned int)height;
     bitmap->pitch      = pitch;
 
-    if ( pbox.xMin < -0x8000 || pbox.xMax > 0x7FFF ||
-         pbox.yMin < -0x8000 || pbox.yMax > 0x7FFF )
+    /* Flag the bounding box size unsuitable for rendering. */
+    /* FT_Renderer modules should check the return value.   */
+    /* The limit is based on the ppem value when available. */ 
     {
-      FT_TRACE3(( "ft_glyphslot_preset_bitmap: [%ld %ld %ld %ld]\n",
-                  pbox.xMin, pbox.yMin, pbox.xMax, pbox.yMax ));
-      return 1;
+      FT_Face  face = slot->face;
+      FT_Pos   xlim = face ? 10 * face->size->metrics.x_ppem : 0x8000;
+      FT_Pos   ylim = face ? 10 * face->size->metrics.y_ppem : 0x8000;
+
+
+      if ( pbox.xMin < -xlim || pbox.xMax > xlim ||
+           pbox.yMin < -ylim || pbox.yMax > ylim )
+      {
+        FT_TRACE3(( "ft_glyphslot_preset_bitmap: [%ld %ld %ld %ld]\n",
+                    pbox.xMin, pbox.yMin, pbox.xMax, pbox.yMax ));
+        return 1;
+      }
     }
 
     return 0;
@@ -1413,7 +1423,10 @@
         if ( ( cur[0]->platform_id == TT_PLATFORM_MICROSOFT &&
                cur[0]->encoding_id == TT_MS_ID_UCS_4        )     ||
              ( cur[0]->platform_id == TT_PLATFORM_APPLE_UNICODE &&
-               cur[0]->encoding_id == TT_APPLE_ID_UNICODE_32    ) )
+               cur[0]->encoding_id == TT_APPLE_ID_UNICODE_32    ) ||
+             ( cur[0]->platform_id == TT_PLATFORM_APPLE_UNICODE &&
+               cur[0]->encoding_id == TT_APPLE_ID_FULL_UNICODE  &&
+               FT_Get_CMap_Format( cur[0] ) == 13               ) )
         {
           face->charmap = cur[0];
           return FT_Err_Ok;
