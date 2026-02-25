@@ -884,9 +884,7 @@
     FT_Error        error;
 
 
-    error = TT_Load_Context( exec, face, size );
-    if ( error )
-      return error;
+    TT_Load_Context( exec, face, size );
 
     /* disable CVT and glyph programs coderange */
     TT_Clear_CodeRange( exec, tt_coderange_cvt );
@@ -952,9 +950,7 @@
     FT_ARRAY_ZERO( size->twilight.org, size->twilight.n_points );
     FT_ARRAY_ZERO( size->twilight.cur, size->twilight.n_points );
 
-    error = TT_Load_Context( exec, face, size );
-    if ( error )
-      return error;
+    TT_Load_Context( exec, face, size );
 
     /* clear storage area */
     FT_ARRAY_ZERO( exec->storage, exec->storeSize );

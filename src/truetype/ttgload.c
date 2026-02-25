@@ -2257,9 +2257,7 @@
           return error;
       }
 
-      error = TT_Load_Context( exec, face, size );
-      if ( error )
-        return error;
+      TT_Load_Context( exec, face, size );
 
       /* check whether the cvt program has disabled hinting */
       if ( size->GS.instruct_control & 1 )
