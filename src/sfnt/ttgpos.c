@@ -817,7 +817,7 @@
 
       /* XXX: Is this modulo 65536 arithmetic? */
       if ( startGlyphID              <= glyph_index &&
-           startGlyphID + glyphCount >= glyph_index )
+           startGlyphID + glyphCount > glyph_index  )
         return FT_PEEK_USHORT( p + ( glyph_index - startGlyphID ) * 2 );
     }
     else
@@ -884,7 +884,7 @@
 
 
       if ( second_glyph > mid_index )
-        min = max + 1;
+        min = mid + 1;
       else if ( second_glyph < mid_index )
         max = mid;
       else
