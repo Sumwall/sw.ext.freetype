@@ -4,7 +4,7 @@
  *
  *   TrueType and OpenType colored glyph layer support (body).
  *
- * Copyright (C) 2018-2025 by
+ * Copyright (C) 2018-2026 by
  * David Turner, Robert Wilhelm, Dominik Röttsches, and Werner Lemberg.
  *
  * Originally written by Shao Yu Zhang <shaozhang@fb.com>.
@@ -236,8 +236,10 @@
       p1                 = (FT_Byte*)( table + base_glyphs_offset_v1 );
       num_base_glyphs_v1 = FT_PEEK_ULONG( p1 );
 
-      if ( ( table_size - base_glyphs_offset_v1 ) / BASE_GLYPH_PAINT_RECORD_SIZE
-               < num_base_glyphs_v1 )
+      /* Account for 4 byte numBaseGlyphPaintRecords at the beginning of */
+      /* the BaseGlyphPaintRecord array.                                 */
+      if ( ( table_size - base_glyphs_offset_v1 - 4 ) /
+               BASE_GLYPH_PAINT_RECORD_SIZE < num_base_glyphs_v1 )
         goto InvalidTable;
 
       colr->num_base_glyphs_v1 = num_base_glyphs_v1;
