@@ -3281,6 +3281,11 @@
       goto Exit;
     }
 
+    if ( bitmap->rows > FT_INT_MAX / bitmap->width )
+    {
+      error = FT_THROW( Array_Too_Large );
+      goto Exit;
+    }
     if ( FT_NEW_ARRAY( dists, bitmap->rows * bitmap->width ) )
       goto Exit;
 
