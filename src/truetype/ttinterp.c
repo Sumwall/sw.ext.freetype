@@ -5132,13 +5132,13 @@
     /* XXX: UNDOCUMENTED! SHZ doesn't move the phantom points.     */
     /*      Twilight zone has no real contours, so use `n_points'. */
     /*      Normal zone's `n_points' includes phantoms, so must    */
-    /*      use end of last contour.                               */
+    /*      subtract them.                                         */
     if ( exc->GS.gep2 == 0 )
       limit = exc->zp2.n_points;
-    else if ( exc->GS.gep2 == 1 && exc->zp2.n_contours > 0 )
-      limit = exc->zp2.contours[exc->zp2.n_contours - 1] + 1;
+    else if ( exc->zp2.n_points > 4U )
+      limit = exc->zp2.n_points - 4U;
     else
-      limit = 0;
+      return;
 
     /* XXX: UNDOCUMENTED! SHZ doesn't touch the points */
     for ( i = 0; i < limit; i++ )
@@ -6191,14 +6191,14 @@
     IUP_WorkerRec  V;
     FT_Byte        mask;
 
-    FT_UInt   first_point;   /* first point of contour        */
-    FT_UInt   end_point;     /* end point (last+1) of contour */
+    FT_UInt  first_point;   /* first point of contour        */
+    FT_UInt  end_point;     /* end point (last+1) of contour */
 
-    FT_UInt   first_touched; /* first touched point in contour   */
-    FT_UInt   cur_touched;   /* current touched point in contour */
+    FT_UInt  first_touched; /* first touched point in contour   */
+    FT_UInt  cur_touched;   /* current touched point in contour */
 
-    FT_UInt   point;         /* current point   */
-    FT_Short  contour;       /* current contour */
+    FT_UInt  point;         /* current point   */
+    FT_UInt  contour;       /* current contour */
 
 
 #ifdef TT_SUPPORT_SUBPIXEL_HINTING_MINIMAL
