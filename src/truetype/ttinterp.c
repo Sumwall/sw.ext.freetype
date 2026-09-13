@@ -2271,9 +2271,12 @@
       exc->moveVector.x = exc->GS.freeVector.x * 4;
       exc->moveVector.y = exc->GS.freeVector.y * 4;
     }
-    else if ( -0x400L < F_dot_P && F_dot_P < 0x400L )
+    else if ( -0x1555L < F_dot_P && F_dot_P < 0x1555L )
     {
-      /* prohibitively orthogonal */
+      /* prohibitively near-orthogonal; the empirical limit avoids */
+      /* bad rendering in Palatino without negative consequences   */
+      FT_TRACE3(( "F_dot_P = %.2f, too small for valid movement.\n",
+                   F_dot_P / 16384.));
       exc->moveVector.x = 0;
       exc->moveVector.y = 0;
     }
@@ -2941,8 +2944,19 @@
   Ins_ROUND( TT_ExecContext  exc,
              FT_Long*        args )
   {
-    args[0] = exc->func_round( exc, args[0],
-                               exc->GS.compensation[exc->opcode & 3] );
+#ifdef TT_SUPPORT_SUBPIXEL_HINTING_MINIMAL
+    /*
+     * Native ClearType applies ROUND to the 1/16-pixel virtual
+     * grid in the ClearType direction.  Approximate this in v40
+     * by leaving the result unrounded.
+     */
+    if ( exc->native_cleartype_x )
+      args[0] = Round_None( exc, args[0],
+                            exc->GS.compensation[exc->opcode & 3] );
+    else
+#endif
+      args[0] = exc->func_round( exc, args[0],
+                                 exc->GS.compensation[exc->opcode & 3] );
   }
 
 
