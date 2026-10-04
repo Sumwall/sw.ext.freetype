@@ -55,7 +55,7 @@
    *
    * Simple glyph flags.
    */
-#define ON_CURVE_POINT  0x01  /* same value as FT_CURVE_TAG_ON            */
+#define ON_CURVE_POINT  0x01
 #define X_SHORT_VECTOR  0x02
 #define Y_SHORT_VECTOR  0x04
 #define REPEAT_FLAG     0x08
@@ -64,6 +64,7 @@
 #define Y_POSITIVE      0x20  /* two meanings depending on Y_SHORT_VECTOR */
 #define SAME_Y          0x20
 #define OVERLAP_SIMPLE  0x40  /* retained as FT_OUTLINE_OVERLAP           */
+#define CUBIC_FLAG      0x80
 
 
   /**************************************************************************
@@ -83,6 +84,7 @@
 #define OVERLAP_COMPOUND           0x0400  /* retained as FT_OUTLINE_OVERLAP */
 #define SCALED_COMPONENT_OFFSET    0x0800
 #define UNSCALED_COMPONENT_OFFSET  0x1000
+#define GID_IS_24_BIT              0x2000
 
 
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
@@ -528,8 +530,9 @@
       y     += delta;
       vec->y = y;
 
-      /* the cast is for stupid compilers */
-      *flag  = (FT_Byte)( f & ON_CURVE_POINT );
+      *flag = (FT_Byte)( f & ON_CURVE_POINT );
+      if ( load->face->is_extended_glyf && ( f & CUBIC_FLAG ) )
+        *flag |= FT_CURVE_TAG_CUBIC;
     }
 
     outline->n_points   = (FT_UShort)n_points;
@@ -571,7 +574,7 @@
       if ( error )
         goto Fail;
 
-      /* check space */
+      /* check space for the flags and a 16-bit glyph ID */
       if ( p + 4 > limit )
         goto Invalid_Composite;
 
@@ -580,7 +583,16 @@
       subglyph->arg1 = subglyph->arg2 = 0;
 
       subglyph->flags = FT_NEXT_USHORT( p );
-      subglyph->index = FT_NEXT_USHORT( p );
+      if ( loader->face->is_extended_glyf           &&
+           ( subglyph->flags & GID_IS_24_BIT ) != 0 )
+      {
+        if ( p + 3 > limit )
+          goto Invalid_Composite;
+
+        subglyph->index = (FT_Int)FT_NEXT_UOFF3( p );
+      }
+      else
+        subglyph->index = FT_NEXT_USHORT( p );
 
       /* we reject composites that have components */
       /* with invalid glyph indices                */

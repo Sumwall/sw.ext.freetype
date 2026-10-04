@@ -369,13 +369,19 @@
     format = ( p[0] << 8 ) | p[1];
     p += 2;
 
-    /* format 1: list of glyph IDs */
-    if ( format == 1 )
+    /* formats 1 and 3: list of 16-bit or 24-bit glyph IDs */
+    if ( format == 1 || format == 3 )
     {
-      count = ( p[0] << 8 ) | p[1];
-      p += 2;
+      FT_UInt  glyph_size = format == 1 ? 2 : 3;
 
-      if ( !CHECK_TABLE_BOUNDS( p, count * 2 ) )
+
+      if ( !CHECK_TABLE_BOUNDS( p, glyph_size ) )
+        return -1;
+
+      count = format == 1 ? FT_NEXT_USHORT( p )
+                          : FT_NEXT_UOFF3( p );
+
+      if ( !CHECK_TABLE_BOUNDS( p, count * glyph_size ) )
         return -1;
 
       /* binary search */
@@ -387,8 +393,9 @@
         while ( min < max )
         {
           FT_UInt   mid   = ( min + max ) >> 1;
-          FT_Byte*  gid_p = p + mid * 2;
-          FT_UInt   gid   = ( gid_p[0] << 8 ) | gid_p[1];
+          FT_Byte*  gid_p = p + mid * glyph_size;
+          FT_UInt   gid   = format == 1 ? FT_PEEK_USHORT( gid_p )
+                                        : FT_PEEK_UOFF3( gid_p );
 
 
           if ( gid == glyph_index )
@@ -401,16 +408,21 @@
       }
     }
 
-    /* format 2: range list */
-    else if ( format == 2 )
+    /* formats 2 and 4: range list with 16-bit or 24-bit values */
+    else if ( format == 2 || format == 4 )
     {
+      FT_UInt  value_size  = format == 2 ? 2 : 3;
+      FT_UInt  record_size = value_size * 3;
       FT_UInt  min, max;
 
 
-      count = ( p[0] << 8 ) | p[1];
-      p += 2;
+      if ( !CHECK_TABLE_BOUNDS( p, value_size ) )
+        return -1;
 
-      if ( !CHECK_TABLE_BOUNDS( p, count * 6 ) )
+      count = format == 2 ? FT_NEXT_USHORT( p )
+                          : FT_NEXT_UOFF3( p );
+
+      if ( !CHECK_TABLE_BOUNDS( p, count * record_size ) )
         return -1;
 
       /* binary search the sorted ranges */
@@ -419,9 +431,11 @@
       while ( min < max )
       {
         FT_UInt   mid   = ( min + max ) >> 1;
-        FT_Byte*  rec   = p + mid * 6;
-        FT_UInt   start = ( rec[0] << 8 ) | rec[1];
-        FT_UInt   end   = ( rec[2] << 8 ) | rec[3];
+        FT_Byte*  rec   = p + mid * record_size;
+        FT_UInt   start = format == 2 ? FT_PEEK_USHORT( rec )
+                                      : FT_PEEK_UOFF3( rec );
+        FT_UInt   end   = format == 2 ? FT_PEEK_USHORT( rec + value_size )
+                                      : FT_PEEK_UOFF3( rec + value_size );
 
 
         if ( glyph_index < start )
@@ -429,8 +443,14 @@
         else if ( glyph_index > end )
           min = mid + 1;
         else
-          return (FT_Int)( ( (FT_UInt)( rec[4] << 8 ) | (FT_UInt)rec[5] ) +
-                           ( glyph_index - start ) );
+        {
+          FT_Byte*  index_p = rec + value_size * 2;
+          FT_UInt   index   = format == 2 ? FT_PEEK_USHORT( index_p )
+                                          : FT_PEEK_UOFF3( index_p );
+
+
+          return (FT_Int)( index + glyph_index - start );
+        }
       }
     }
 
@@ -1323,6 +1343,10 @@
    *   num_coords ::
    *     Number of coords in `current_coords`.
    *
+   *   condition_defaults ::
+   *     Optional defaults for condition values.  If non-NULL, return each
+   *     unrounded value's positive sign (0 or 1), instead of scaled deltas.
+   *
    * @Output:
    *   deltas ::
    *     Array to store the deltas (must have space for `num_deltas`).
@@ -1339,7 +1363,8 @@
                            FT_Long*   deltas,
                            FT_UInt    shift,
                            FT_Fixed*  current_coords,
-                           FT_UInt    num_coords )
+                           FT_UInt    num_coords,
+                           FT_Short*  condition_defaults )
   {
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
 
@@ -1382,7 +1407,8 @@
     {
       /* no variation store - return zeros */
       for ( i = 0; i < num_deltas; i++ )
-        deltas[i] = 0;
+        deltas[i] = condition_defaults ? FT_BOOL( condition_defaults[i] > 0 )
+                                       : 0;
       return FT_Err_Ok;
     }
 
@@ -1484,8 +1510,19 @@
     }
 
     /* initialize accumulators to zero */
-    for ( i = 0; i < num_deltas; i++ )
-      accumulators[i] = FT_INT64_ZERO;
+    FT_ARRAY_ZERO( accumulators, num_deltas );
+    if ( condition_defaults )
+    {
+      for ( i = 0; i < num_deltas; i++ )
+      {
+#ifdef FT_INT64
+        accumulators[i] = (FT_Int64)condition_defaults[i] * 0x10000L;
+#else
+        accumulators[i].lo = (FT_UInt32)(FT_Int32)condition_defaults[i] << 16;
+        accumulators[i].hi = condition_defaults[i] < 0 ? 0xFFFFFFFFU : 0;
+#endif
+      }
+    }
 
     /* parse `SparseVarRegionList` to get region definitions */
     if ( regions_offset > 0 && regions_offset < varc->table_size )
@@ -1627,7 +1664,7 @@
           accumulators[k] += product;
 #else /* !FT_INT64 */
           /* 32-bit fallback */
-          if ( (FT_UInt32)( region_delta + 0x8000 ) <= 0x20000 )
+          if ( (FT_UInt32)region_delta + 0x8000U <= 0xFFFFU )
           {
             /* fast path - multiplication fits in 32 bits */
             FT_Int32  product = region_delta * region_scalar;
@@ -1635,17 +1672,15 @@
 
             accumulators[k].lo += (FT_UInt32)product;
             if ( accumulators[k].lo < (FT_UInt32)product )
-              accumulators[k].hi += ( product < 0 ) ? 0 : 1;
+              accumulators[k].hi += 1;
             if ( product < 0 )
               accumulators[k].hi -= 1;
           }
           else
           {
             /* slow path - full 64-bit signed multiplication */
-            FT_UInt32 a = ( region_delta < 0 ) ? -(FT_UInt32)region_delta
-                                               : region_delta;
-            FT_UInt32 b = ( region_scalar < 0 ) ? -(FT_UInt32)region_scalar
-                                                : region_scalar;
+            FT_UInt32  a = (FT_UInt32)ULABS( region_delta );
+            FT_UInt32  b = (FT_UInt32)ULABS( region_scalar );
 
             FT_UInt32  a_lo = a & 0xFFFF;
             FT_UInt32  a_hi = a >> 16;
@@ -1694,13 +1729,22 @@
       for ( i = 0; i < num_deltas; i++ )
       {
 #ifdef FT_INT64
-        deltas[i] =
-          (FT_Long)( ( accumulators[i] + rounding ) >> right_shift );
+        if ( condition_defaults )
+          deltas[i] = FT_BOOL( accumulators[i] > 0 );
+        else
+          deltas[i] =
+            (FT_Long)( ( accumulators[i] + rounding ) >> right_shift );
 #else
         /* 32-bit fallback */
         FT_UInt32  hi = accumulators[i].hi;
         FT_UInt32  lo = accumulators[i].lo;
 
+
+        if ( condition_defaults )
+        {
+          deltas[i] = FT_BOOL( !( hi & 0x80000000U ) && ( hi || lo ) );
+          continue;
+        }
 
         /* add rounding */
         lo += (FT_UInt32)rounding;
@@ -1708,11 +1752,11 @@
           hi += 1;
 
         /* shift right by (16 - shift) bits */
-        if ( right_shift >= 16 )
-          deltas[i] = (FT_Long)hi;
+        if ( right_shift == 0 )
+          deltas[i] = (FT_Long)(FT_Int32)lo;
         else
-          deltas[i] = (FT_Long)( ( hi << ( 16 + shift ) ) |
-                                 ( lo >> right_shift )    );
+          deltas[i] = (FT_Long)(FT_Int32)( ( hi << ( 16 + shift ) ) |
+                                           ( lo >> right_shift )    );
 #endif
       }
     }
@@ -1736,6 +1780,7 @@
     FT_UNUSED( shift );
     FT_UNUSED( current_coords );
     FT_UNUSED( num_coords );
+    FT_UNUSED( condition_defaults );
 
     return FT_THROW( Unimplemented_Feature );
 
@@ -1860,6 +1905,11 @@
     FT_UInt  format;
 
 
+    /* A zero condition offset represents True.  Top-level zero offsets */
+    /* resolve to the start of the ConditionList.                       */
+    if ( cond == varc->condition_list )
+      return TRUE;
+
     if ( !cond                             ||
          depth > TT_VARC_MAX_NESTING_LEVEL ||
          cond + 2 > table_limit            )
@@ -1898,7 +1948,7 @@
       {
         FT_Short   default_value;
         FT_UInt32  var_idx;
-        FT_Long    delta = 0;
+        FT_Long    positive;
 
 
         if ( cond + 8 > table_limit )
@@ -1912,14 +1962,16 @@
                   ( (FT_UInt32)cond[6] << 8  ) |
                     (FT_UInt32)cond[7];
 
-        /* A variable value: default plus the interpolated (integer)      */
-        /* delta from the `MultiItemVariationStore`.  shift=0 returns the */
-        /* delta as a plain integer.                                      */
+        /* Compare the unrounded default plus interpolated delta. */
+        /* Even a small positive fraction makes a condition true. */
+        positive = FT_BOOL( default_value > 0 );
         if ( var_idx != 0xFFFFFFFFUL )
-          (void)tt_varc_get_item_deltas( face, varc, var_idx, 1, &delta, 0,
-                                         coords, num_coords );
+          (void)tt_varc_get_item_deltas( face, varc, var_idx, 1,
+                                         &positive, 0,
+                                         coords, num_coords,
+                                         &default_value );
 
-        return FT_BOOL( (FT_Long)default_value + delta > 0 );
+        return FT_BOOL( positive );
       }
 
     case 3:  /* ConditionAnd */
@@ -1948,11 +2000,12 @@
 
 
           p += 3;
-          r = tt_varc_eval_condition( face, varc,
-                                      cond + sub_off,
-                                      table_limit,
-                                      coords, num_coords,
-                                      depth + 1 );
+          r = sub_off == 0 ? TRUE
+                           : tt_varc_eval_condition( face, varc,
+                                                     cond + sub_off,
+                                                     table_limit,
+                                                     coords, num_coords,
+                                                     depth + 1 );
 
           if ( is_and && !r )
             return FALSE;
@@ -1974,6 +2027,9 @@
         sub_off = ( (FT_UInt32)cond[2] << 16 ) |
                   ( (FT_UInt32)cond[3] << 8  ) |
                     (FT_UInt32)cond[4];
+
+        if ( sub_off == 0 )
+          return FALSE;
 
         return FT_BOOL( !tt_varc_eval_condition( face, varc, cond + sub_off,
                                                  table_limit, coords,
@@ -2182,7 +2238,7 @@
                                      component->num_axis_values,
                                      deltas, 2,
                                      current_coords,
-                                     num_coords );
+                                     num_coords, NULL );
     if ( !error )
     {
       for ( i = 0; i < component->num_axis_values; i++ )
@@ -2287,7 +2343,7 @@
                                      num_deltas,
                                      deltas, 4,
                                      current_coords,
-                                     num_coords );
+                                     num_coords, NULL );
     if ( !error )
     {
       /* Apply deltas to transform components in order.             */
@@ -3262,10 +3318,10 @@
 
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
 
-      if ( component.num_axis_values > 0 &&
-           component.axis_values         &&
-           num_coords > 0                &&
-           parent_coords                 )
+      if ( ( ( component.num_axis_values > 0 && component.axis_values ) ||
+             ( component.flags & VARC_RESET_UNSPECIFIED_AXES )          ) &&
+           num_coords > 0                                                 &&
+           parent_coords                                                  )
       {
         /* allocate new_coords only                  */
         /* (`parent_coords` replaces `saved_coords`) */
@@ -3482,12 +3538,19 @@
 
             /* Convert from 26.6 font units to 26.6 device pixels. */
             /* 26.6 * 16.16 = 42.22; >> 22 gives 26.6.             */
+#ifdef FT_INT64
             internal->transform_delta.x =
               (FT_Pos)( ( (FT_Int64)composed_delta.x * x_scale +
                           0x200000L ) >> 22 );
             internal->transform_delta.y =
               (FT_Pos)( ( (FT_Int64)composed_delta.y * y_scale +
                           0x200000L ) >> 22 );
+#else
+            internal->transform_delta.x =
+              FT_MulDiv( composed_delta.x, x_scale, 0x400000L );
+            internal->transform_delta.y =
+              FT_MulDiv( composed_delta.y, y_scale, 0x400000L );
+#endif
           }
           else
           {
